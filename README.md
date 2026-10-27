@@ -1,8 +1,8 @@
 # COSMIC Forge Engine
 
-The compositor and panel engine for [COSMIC Forge](https://github.com/motixo/cosmic-forge),
+The compositor, panel and lock screen engine for [COSMIC Forge](https://github.com/motixo/cosmic-forge),
 a mod manager for COSMIC. This repository owns the pinned COSMIC patches, shader
-runtime, builders and installers. Penumbra and independent light/dark panel colors live in `panel/`. [Glass shaders](https://github.com/motixo/cosmic-forge-shaders)
+runtime, builders and installers. Veil background and media support lives in `greeter/`. Penumbra and independent light/dark panel colors live in `panel/`. [Glass shaders](https://github.com/motixo/cosmic-forge-shaders)
 have their own repository. No replacement COSMIC Settings is installed.
 
 Forge Settings downloads the latest stable `cosmic-forge-engine.json` release,

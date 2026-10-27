@@ -121,5 +121,5 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" release/* --clobber
           else
-            gh release create "$TAG" release/* --verify-tag --latest --title "$TAG" --notes 'Independent Forge compositor and panel components. Prebuilt binaries for COSMIC 1.10 and 1.11 on x86_64 and ARM64 Linux with glibc 2.35+. Supports Arch, Fedora, Ubuntu and Pop!_OS. Restore selects original system components and preserves preferences.'
+            gh release create "$TAG" release/* --verify-tag --latest --title "$TAG" --notes 'Independent Forge compositor, panel and lock screen components. Prebuilt binaries for COSMIC 1.10 and 1.11 on x86_64 and ARM64; glibc 2.35+ for compositor/panel and 2.39+ for lock screen. Supports Arch, Fedora, Ubuntu and Pop!_OS. Restore selects original system components and preserves preferences.'
           fi
