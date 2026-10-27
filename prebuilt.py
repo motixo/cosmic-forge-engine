@@ -25,8 +25,12 @@ def architecture():
     raise RuntimeError('No prebuilt compositor for this architecture; use Build compositor')
 
 
-def asset_name(version, machine):
-    return f'cosmic-comp-{version}-linux-{machine}.xz'
+def program_name(component):
+    return {'compositor': 'cosmic-comp', 'panel': 'cosmic-panel'}[component]
+
+
+def asset_name(version, machine, component='compositor'):
+    return f'{program_name(component)}-{version}-linux-{machine}.xz'
 
 
 def release_metadata(tag=None):
@@ -45,8 +49,8 @@ def download(url, destination, size):
                     '--user-agent', 'COSMIC-Forge-Engine', '--max-time', '45' if size <= 2 * 1024 * 1024 else '180', '--max-filesize', str(size), '--output', str(destination), url], check=True)
 
 
-def from_release(release, version, machine, cache, fetch=download):
-    name = asset_name(version, machine)
+def from_release(release, version, machine, cache, fetch=download, component='compositor'):
+    name = asset_name(version, machine, component)
     if not isinstance(release, dict) or not isinstance(release.get('assets'), list):
         raise RuntimeError('Invalid engine release metadata')
     asset = next((a for a in release['assets'] if isinstance(a, dict) and a.get('name') == name), None)
@@ -62,7 +66,7 @@ def from_release(release, version, machine, cache, fetch=download):
     expected = checksum[7:].lower()
     directory = cache / expected
     archive = directory / 'compositor.xz'
-    binary = directory / 'cosmic-comp'
+    binary = directory / program_name(component)
     if directory.is_symlink() or binary.is_symlink() or archive.is_symlink():
         raise RuntimeError('Preserved a replaced compositor cache')
     directory.mkdir(parents=True, exist_ok=True)
@@ -106,15 +110,17 @@ def from_release(release, version, machine, cache, fetch=download):
     return binary
 
 
-def obtain(version, config, tag=None, prefix=None):
+def obtain(version, config, tag=None, prefix=None, component='compositor'):
     minimum = tuple(int(part) for part in config['prebuilt']['glibc_min'].split('.'))
     libc, current = platform.libc_ver()
     if libc != 'glibc' or tuple(int(part) for part in current.split('.')) < minimum:
         raise RuntimeError('Prebuilt compositors require glibc ' + config['prebuilt']['glibc_min'] +
                            ' or newer; use Build compositor')
     cache = (prefix / 'cache' if prefix else xdg('XDG_CACHE_HOME', '.cache')) / 'cosmic-forge/binaries'
-    binary = from_release(release_metadata(tag), version, architecture(), cache)
-    expected = config['sources'][version] + '-forge-r' + str(config['renderer_revision'])
+    binary = from_release(release_metadata(tag), version, architecture(), cache, component=component)
+    marker = '-forge-panel-r' if component == 'panel' else '-forge-r'
+    revision = config.get('revision', config.get('renderer_revision'))
+    expected = config['sources'][version] + marker + str(revision)
     try:
         output = subprocess.check_output([str(binary), '--version'], text=True, stderr=subprocess.STDOUT, timeout=15)
     except (OSError, subprocess.SubprocessError) as error:

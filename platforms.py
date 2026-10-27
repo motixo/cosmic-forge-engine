@@ -32,8 +32,7 @@ def package_query(manager, name):
     raise RuntimeError('Unsupported package manager')
 
 
-def compositor_version(package):
-    sources = json.loads((ROOT / 'release.json').read_text())['sources']
+def upstream_version(package, sources, program):
     version_text = package.split()[1]
     match = re.match(r'^(?:[0-9]+:)?([0-9]+\.[0-9]+\.[0-9]+)(?:[-+~.]|$)', version_text)
     if match and match[1] in sources:
@@ -41,7 +40,7 @@ def compositor_version(package):
     # Pop packages may use 0.1~timestamp~distribution~commit instead of epoch versions.
     for candidate in [version_text, None]:
         if candidate is None:
-            candidate = subprocess.check_output(['/usr/bin/cosmic-comp', '--version'], text=True, timeout=15)
+            candidate = subprocess.check_output(['/usr/bin/' + program, '--version'], text=True, timeout=15)
         hashes = re.findall(r'(?<![0-9a-f])[0-9a-f]{7,40}(?![0-9a-f])', candidate)
         for version, commit in sources.items():
             if any(commit.startswith(value) for value in hashes):
@@ -49,10 +48,14 @@ def compositor_version(package):
     raise RuntimeError('No tested Forge engine for this COSMIC version. Published versions: ' + ', '.join(sources))
 
 
-def installed_packages():
+def compositor_version(package):
+    return upstream_version(package, json.loads((ROOT / 'release.json').read_text())['sources'], 'cosmic-comp')
+
+
+def installed_packages(names=PACKAGES, sources=None, program='cosmic-comp'):
     manager = package_manager()
     packages = {}
-    for name in PACKAGES:
+    for name in names:
         result = subprocess.run(package_query(manager, name), check=True, capture_output=True, text=True)
         package = result.stdout.strip()
         fields = package.split()
@@ -60,4 +63,5 @@ def installed_packages():
            (manager == 'dpkg-query' and (len(fields) != 3 or fields[2] != 'installed')):
             raise RuntimeError('Install the COSMIC desktop packages first: ' + name)
         packages[name] = package
-    return packages, compositor_version(packages['cosmic-comp'])
+    version = compositor_version(packages[program]) if sources is None else upstream_version(packages[program], sources, program)
+    return packages, version

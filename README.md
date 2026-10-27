@@ -1,8 +1,8 @@
 # COSMIC Forge Engine
 
-The glass compositor engine for [COSMIC Forge](https://github.com/motixo/cosmic-forge),
+The compositor and panel engine for [COSMIC Forge](https://github.com/motixo/cosmic-forge),
 a mod manager for COSMIC. This repository owns the pinned COSMIC patches, shader
-runtime, builder and installer. [Glass shaders](https://github.com/motixo/cosmic-forge-shaders)
+runtime, builders and installers. Penumbra and independent light/dark panel colors live in `panel/`. [Glass shaders](https://github.com/motixo/cosmic-forge-shaders)
 have their own repository. No replacement COSMIC Settings is installed.
 
 Forge Settings downloads the latest stable `cosmic-forge-engine.json` release,
@@ -30,6 +30,10 @@ python install.py                 # Install the matching prebuilt release
 python install.py --build         # Build and install from pinned source
 python install.py --binary "$PWD/build/bin/cosmic-comp"
 python recovery.py
+# Independent panel component (Penumbra + theme-aware colors):
+python install.py --component panel
+python install.py --component panel --build
+python install.py --component panel --restore
 ```
 
 The builder downloads upstream commits pinned in `release.json`. Use `--source`,
@@ -102,3 +106,7 @@ integration and upstream notices. GPL-3.0-only; upstream dependencies retain the
 own licenses.
 
 The static libdisplay-info dependency retains its MIT notice in `LICENSE.libdisplay-info` and the engine bundle.
+
+Panel preferences use native profiles and optional `top_edge_gradient` and `forge_colors` keys. `forge_colors: Some((light: Some((r,g,b)), dark: None))` selects an RGB color in light mode and follows the COSMIC palette in dark mode, even with Forge closed. Original background preferences and Settings remain intact. Panel revision is independent of the compositor revision.
+
+To update an existing release, dispatch the release workflow with `component=panel` and `publish=true`. It replaces matching assets on the chosen existing tag and preserves other component assets. Forced tag updates run checks without rebuilding; keep that tag on the tested source commit.

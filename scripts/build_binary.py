@@ -15,7 +15,7 @@ import tarfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from prebuilt import architecture, asset_name, download
+from prebuilt import architecture, asset_name, download, program_name
 
 DISPLAY_INFO_URL = 'https://gitlab.freedesktop.org/emersion/libdisplay-info/-/archive/0.3.0/libdisplay-info-0.3.0.tar.gz'
 DISPLAY_INFO_SHA256 = '2b467e3336aec63819d6aca28d7310d3dc7415b2b3a3c3a5aec9d3727053c078'
@@ -45,20 +45,23 @@ def native_library():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--component', choices=['compositor', 'panel'], default='compositor')
     parser.add_argument('--cosmic-version', required=True)
     parser.add_argument('--jobs', type=int, default=3)
     args = parser.parse_args()
-    config = json.loads((ROOT / 'release.json').read_text())
+    component_root = ROOT / 'panel' if args.component == 'panel' else ROOT
+    config = json.loads((component_root / 'release.json').read_text())
     if args.cosmic_version not in config['sources']:
         parser.error('COSMIC version is not pinned in release.json')
     prefix = native_library()
     environment = dict(os.environ, PKG_CONFIG_PATH=str(prefix / 'lib/pkgconfig'),
                        SYSTEM_DEPS_LIBDISPLAY_INFO_LINK='static')
-    subprocess.run([sys.executable, str(ROOT / 'build.py'), '--cosmic-version', args.cosmic_version,
-                    '--work-dir', str(ROOT / 'build/portable-sources' / args.cosmic_version),
-                    '--target-dir', str(ROOT / 'build/portable-target' / args.cosmic_version),
+    suffix = Path('panel') / args.cosmic_version if args.component == 'panel' else Path(args.cosmic_version)
+    subprocess.run([sys.executable, str(component_root / 'build.py'), '--cosmic-version', args.cosmic_version,
+                    '--work-dir', str(ROOT / 'build/portable-sources' / suffix),
+                    '--target-dir', str(ROOT / 'build/portable-target' / suffix),
                     '--jobs', str(args.jobs)], env=environment, check=True)
-    binary = ROOT / 'build/bin/cosmic-comp'
+    binary = ROOT / 'build/bin' / program_name(args.component)
     subprocess.run(['strip', '--strip-unneeded', str(binary)], check=True)
     subprocess.run([str(binary), '--version'], check=True)
     linked = subprocess.check_output(['ldd', str(binary)], text=True)
@@ -70,9 +73,9 @@ def main():
         raise RuntimeError('Build this binary on the declared glibc baseline or an older system')
     output = ROOT / 'build/release'
     output.mkdir(parents=True, exist_ok=True)
-    with binary.open('rb') as source, lzma.open(output / asset_name(args.cosmic_version, architecture()), 'wb', preset=6) as target:
+    with binary.open('rb') as source, lzma.open(output / asset_name(args.cosmic_version, architecture(), args.component), 'wb', preset=6) as target:
         shutil.copyfileobj(source, target)
-    print('Portable asset: ' + str(output / asset_name(args.cosmic_version, architecture())))
+    print('Portable asset: ' + str(output / asset_name(args.cosmic_version, architecture(), args.component)))
 
 
 if __name__ == '__main__':

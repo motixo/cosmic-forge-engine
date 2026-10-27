@@ -20,7 +20,15 @@
     "platforms.py",
     "prebuilt.py",
     "LICENSE",
-    "LICENSE.libdisplay-info"
+    "LICENSE.libdisplay-info",
+    "panel/__init__.py",
+    "panel/release.json",
+    "panel/build.py",
+    "panel/install.py",
+    "panel/recovery.py",
+    "panel/penumbra.patch",
+    "panel/colors.patch",
+    "panel/NOTICE"
   ],
   "prebuilt": {
     "glibc_min": "2.35",

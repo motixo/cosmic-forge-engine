@@ -1,0 +1,20 @@
+{
+  "revision": 1,
+  "abi": 1,
+  "upstream": "https://github.com/pop-os/cosmic-panel.git",
+  "origin": {
+    "repository": "motixo/penumbra-panel",
+    "commit": "8914fb763e1126d60aa89b1f9b2d355d3d34660b"
+  },
+  "sources": {
+    "1.10.0": "3ce6ce1cec97669f91e809962d9446aaefe8a06e",
+    "1.11.0": "ca20ce3185b3b4404f429d59d429c40b58a2ddef"
+  },
+  "prebuilt": {
+    "glibc_min": "2.35",
+    "architectures": [
+      "x86_64",
+      "aarch64"
+    ]
+  }
+}
