@@ -33,6 +33,7 @@ class EngineInstallerTests(unittest.TestCase):
         self.system.write_bytes(b'\x7fELForiginal-system-compositor')
         self.system.chmod(0o755)
         self.enterContext(patch('recovery.SYSTEM_COMPOSITOR', self.system))
+        self.enterContext(patch.object(installer, 'package_manager', return_value='pacman'))
 
     def install(self):
         with patch.object(installer.subprocess, 'check_output', return_value=PIN):
