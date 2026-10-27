@@ -1,0 +1,141 @@
+diff --git a/cosmic-greeter-config/src/lib.rs b/cosmic-greeter-config/src/lib.rs
+--- a/cosmic-greeter-config/src/lib.rs
++++ b/cosmic-greeter-config/src/lib.rs
+@@ -2,6 +2,7 @@
+ // SPDX-License-Identifier: GPL-3.0-only
+ 
+ pub mod user;
++pub mod lockscreen;
+ 
+ use cosmic_config::CosmicConfigEntry;
+ use cosmic_config::cosmic_config_derive::CosmicConfigEntry;
+diff --git a/cosmic-greeter-config/src/lockscreen.rs b/cosmic-greeter-config/src/lockscreen.rs
+new file mode 100644
+--- /dev/null
++++ b/cosmic-greeter-config/src/lockscreen.rs
+@@ -0,0 +1,22 @@
++// SPDX-License-Identifier: GPL-3.0-only
++
++use cosmic_config::cosmic_config_derive::CosmicConfigEntry;
++use cosmic_config::CosmicConfigEntry;
++use serde::{Deserialize, Serialize};
++use std::path::PathBuf;
++
++pub const APP_ID: &str = "com.system76.CosmicLockscreen";
++
++/// A missing wallpaper follows the desktop, including per-output backgrounds.
++#[derive(Debug, Clone, Default, PartialEq, CosmicConfigEntry, Deserialize, Serialize)]
++#[version = 1]
++#[id = "com.system76.CosmicLockscreen"]
++pub struct Config {
++    pub wallpaper: Option<PathBuf>,
++}
++
++impl Config {
++    pub fn config() -> Result<cosmic_config::Config, cosmic_config::Error> {
++        cosmic_config::Config::new(APP_ID, Self::VERSION)
++    }
++}
+diff --git a/src/locker.rs b/src/locker.rs
+--- a/src/locker.rs
++++ b/src/locker.rs
+@@ -18,6 +18,7 @@
+ use cosmic::surface::action::LiveSettings;
+ use cosmic::{Element, executor, surface, theme, widget};
+ use cosmic_config::CosmicConfigEntry;
++use cosmic_greeter_config::lockscreen;
+ use cosmic_greeter_daemon::{TimeAppletConfig, UserData};
+ use std::any::TypeId;
+ use std::ffi::{CStr, CString};
+@@ -271,6 +272,7 @@
+     SessionLockEvent(SessionLockEvent),
+     Channel(mpsc::Sender<String>),
+     BackgroundState(cosmic_bg_config::state::State),
++    LockscreenConfig(lockscreen::Config),
+     DropdownToggle(Dropdown),
+     KeyboardLayout(usize),
+     Inhibit(Arc<OwnedFd>),
+@@ -318,9 +320,27 @@
+     inhibit_opt: Option<Arc<OwnedFd>>,
+     value_tx_opt: Option<mpsc::Sender<String>>,
+     authenticating: bool,
++    lockscreen_config: lockscreen::Config,
++    lockscreen_image: Option<widget::image::Handle>,
+ }
+ 
+ impl App {
++    fn load_lockscreen_image(config: &lockscreen::Config) -> Option<widget::image::Handle> {
++        let path = config.wallpaper.as_ref()?;
++        match image::open(path) {
++            Ok(image) => {
++                let image = image.into_rgba8();
++                Some(widget::image::Handle::from_rgba(
++                    image.width(), image.height(), image.into_raw(),
++                ))
++            }
++            Err(error) => {
++                tracing::warn!(?path, ?error, "could not load lock screen wallpaper; following desktop");
++                None
++            }
++        }
++    }
++
+     fn menu(&self, surface_id: SurfaceId) -> Element<'_, Message> {
+         let window_width = self
+             .common
+@@ -707,7 +727,14 @@
+             inhibit_opt: None,
+             value_tx_opt: None,
+             authenticating: false,
++            lockscreen_config: lockscreen::Config::config()
++                .ok()
++                .map(|helper| lockscreen::Config::get_entry(&helper)
++                    .unwrap_or_else(|(_, config)| config))
++                .unwrap_or_default(),
++            lockscreen_image: None,
+         };
++        app.lockscreen_image = Self::load_lockscreen_image(&app.lockscreen_config);
+ 
+         let task = if cfg!(feature = "logind") && app.flags.logind_available {
+             if already_locked {
+@@ -1079,6 +1106,10 @@
+                 self.common.surface_images.clear();
+                 self.common.update_wallpapers(&self.flags.user_data);
+             }
++            Message::LockscreenConfig(config) => {
++                self.lockscreen_image = Self::load_lockscreen_image(&config);
++                self.lockscreen_config = config;
++            }
+             Message::DropdownToggle(dropdown) => {
+                 if self.dropdown_opt == Some(dropdown) {
+                     self.dropdown_opt = None;
+@@ -1219,6 +1250,13 @@
+ 
+     /// Creates a view after each update.
+     fn view_window(&self, _surface_id: SurfaceId) -> Element<'_, Self::Message> {
++        if let Some(image) = &self.lockscreen_image {
++            return widget::image(image)
++                .content_fit(iced::ContentFit::Cover)
++                .width(Length::Fill)
++                .height(Length::Fill)
++                .into();
++        }
+         widget::space::horizontal().into()
+     }
+ 
+@@ -1226,6 +1264,15 @@
+         let mut subscriptions = Vec::with_capacity(7);
+ 
+         subscriptions.push(self.common.subscription().map(Message::from));
++
++        struct LockscreenSubscription;
++        subscriptions.push(
++            cosmic_config::config_subscription(
++                TypeId::of::<LockscreenSubscription>(),
++                lockscreen::APP_ID.into(),
++                lockscreen::Config::VERSION,
++            ).map(|res| Message::LockscreenConfig(res.config)),
++        );
+ 
+         struct BackgroundSubscription;
+         subscriptions.push(

@@ -26,7 +26,7 @@ def architecture():
 
 
 def program_name(component):
-    return {'compositor': 'cosmic-comp', 'panel': 'cosmic-panel'}[component]
+    return {'compositor': 'cosmic-comp', 'panel': 'cosmic-panel', 'greeter': 'cosmic-greeter'}[component]
 
 
 def asset_name(version, machine, component='compositor'):
@@ -118,7 +118,7 @@ def obtain(version, config, tag=None, prefix=None, component='compositor'):
                            ' or newer; build from source')
     cache = (prefix / 'cache' if prefix else xdg('XDG_CACHE_HOME', '.cache')) / 'cosmic-forge/binaries'
     binary = from_release(release_metadata(tag), version, architecture(), cache, component=component)
-    marker = '-forge-panel-r' if component == 'panel' else '-forge-r'
+    marker = {'panel': '-forge-panel-r', 'greeter': '-forge-greeter-r', 'compositor': '-forge-r'}[component]
     revision = config.get('revision', config.get('renderer_revision'))
     expected = config['sources'][version] + marker + str(revision)
     try:

@@ -45,18 +45,18 @@ def native_library():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--component', choices=['compositor', 'panel'], default='compositor')
+    parser.add_argument('--component', choices=['compositor', 'panel', 'greeter'], default='compositor')
     parser.add_argument('--cosmic-version', required=True)
     parser.add_argument('--jobs', type=int, default=3)
     args = parser.parse_args()
-    component_root = ROOT / 'panel' if args.component == 'panel' else ROOT
+    component_root = ROOT if args.component == 'compositor' else ROOT / args.component
     config = json.loads((component_root / 'release.json').read_text())
     if args.cosmic_version not in config['sources']:
         parser.error('COSMIC version is not pinned in release.json')
     prefix = native_library()
     environment = dict(os.environ, PKG_CONFIG_PATH=str(prefix / 'lib/pkgconfig'),
                        SYSTEM_DEPS_LIBDISPLAY_INFO_LINK='static')
-    suffix = Path('panel') / args.cosmic_version if args.component == 'panel' else Path(args.cosmic_version)
+    suffix = Path(args.cosmic_version) if args.component == 'compositor' else Path(args.component) / args.cosmic_version
     subprocess.run([sys.executable, str(component_root / 'build.py'), '--cosmic-version', args.cosmic_version,
                     '--work-dir', str(ROOT / 'build/portable-sources' / suffix),
                     '--target-dir', str(ROOT / 'build/portable-target' / suffix),

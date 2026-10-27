@@ -1,0 +1,111 @@
+diff --git a/build.rs b/build.rs
+index be10241..872201e 100644
+--- a/build.rs
++++ b/build.rs
+@@ -1,4 +1,5 @@
+ fn main() -> Result<(), Box<dyn std::error::Error>> {
++    println!("cargo:rerun-if-env-changed=FORGE_LOCKSCREEN_VERSION");
+     // Rebuild if i18n files change
+     println!("cargo:rerun-if-changed=i18n");
+ 
+diff --git a/cosmic-greeter-config/src/lockscreen.rs b/cosmic-greeter-config/src/lockscreen.rs
+index e669a27..72dd56d 100644
+--- a/cosmic-greeter-config/src/lockscreen.rs
++++ b/cosmic-greeter-config/src/lockscreen.rs
+@@ -13,6 +13,8 @@ pub const APP_ID: &str = "com.system76.CosmicLockscreen";
+ #[id = "com.system76.CosmicLockscreen"]
+ pub struct Config {
+     pub wallpaper: Option<PathBuf>,
++    #[serde(default)]
++    pub media_enabled: bool,
+ }
+ 
+ impl Config {
+diff --git a/src/locker.rs b/src/locker.rs
+index 751e70d..ec443a7 100644
+--- a/src/locker.rs
++++ b/src/locker.rs
+@@ -132,7 +132,8 @@ pub fn pam_thread(username: String, conversation: Conversation) -> Result<(), pa
+     //TODO: send errors to GUI, restart process
+ 
+     // Create PAM context
+-    let mut context = pam_client::Context::new("cosmic-greeter", Some(&username), conversation)?;
++    let service = if std::path::Path::new("/etc/pam.d/cosmic-greeter").is_file() { "cosmic-greeter" } else { "login" };
++    let mut context = pam_client::Context::new(service, Some(&username), conversation)?;
+ 
+     // Authenticate the user (ask for password, 2nd-factor token, fingerprint, etc.)
+     tracing::info!("authenticate");
+@@ -330,7 +331,19 @@ pub struct App {
+ impl App {
+     fn load_lockscreen_image(config: &lockscreen::Config) -> Option<widget::image::Handle> {
+         let path = config.wallpaper.as_ref()?;
+-        match image::open(path) {
++        let load = || -> image::ImageResult<image::DynamicImage> {
++            if !path.is_file() || std::fs::metadata(path)?.len() > 64 * 1024 * 1024 {
++                return Err(std::io::Error::other("invalid lock screen image").into());
++            }
++            let mut reader = image::ImageReader::open(path)?.with_guessed_format()?;
++            let mut limits = image::Limits::default();
++            limits.max_image_width = Some(16384);
++            limits.max_image_height = Some(16384);
++            limits.max_alloc = Some(256 * 1024 * 1024);
++            reader.limits(limits);
++            reader.decode()
++        };
++        match load() {
+             Ok(image) => {
+                 let image = image.into_rgba8();
+                 Some(widget::image::Handle::from_rgba(
+@@ -646,7 +659,7 @@ impl App {
+         };
+         let mut content = widget::column::with_capacity(3)
+             .push(iced::widget::row![left_element, right_element].align_y(Alignment::Start));
+-        if let Some(media) = self.media.view() {
++        if self.lockscreen_config.media_enabled && let Some(media) = self.media.view() {
+             content = content.push(widget::space::vertical().height(12))
+                 .push(media.map(Message::Media));
+         }
+@@ -769,7 +782,7 @@ impl cosmic::Application for App {
+         match message {
+             Message::None => {}
+             Message::Media(message) => {
+-                if matches!(self.state, State::Locked { .. }) {
++                if self.lockscreen_config.media_enabled && matches!(self.state, State::Locked { .. }) {
+                     return self.media.update(message).map(|action| action.map(Message::Media));
+                 }
+             }
+@@ -1121,6 +1134,9 @@ impl cosmic::Application for App {
+                 self.common.update_wallpapers(&self.flags.user_data);
+             }
+             Message::LockscreenConfig(config) => {
++                if !config.media_enabled {
++                    self.media.clear();
++                }
+                 self.lockscreen_image = Self::load_lockscreen_image(&config);
+                 self.lockscreen_config = config;
+             }
+@@ -1279,7 +1295,7 @@ impl cosmic::Application for App {
+         let mut subscriptions = Vec::with_capacity(7);
+ 
+         subscriptions.push(self.common.subscription().map(Message::from));
+-        if matches!(self.state, State::Locked { .. }) {
++        if self.lockscreen_config.media_enabled && matches!(self.state, State::Locked { .. }) {
+             subscriptions.push(media::subscription().map(Message::Media));
+         }
+ 
+diff --git a/src/main.rs b/src/main.rs
+index 8fa0ea8..a9adf55 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -22,9 +22,9 @@ fn main() -> Result<(), Box<dyn Error>> {
+             }
+             Some("--version") | Some("-v") => {
+                 println!(
+-                    "cosmic-greeter {} (git commit {})",
++                    "cosmic-greeter {} (git commit {}) forge-lockscreen-engine-v1",
+                     env!("CARGO_PKG_VERSION"),
+-                    env!("VERGEN_GIT_SHA")
++                    env!("FORGE_LOCKSCREEN_VERSION")
+                 );
+                 return Ok(());
+             }

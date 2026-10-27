@@ -28,7 +28,16 @@
     "panel/recovery.py",
     "panel/penumbra.patch",
     "panel/colors.patch",
-    "panel/NOTICE"
+    "panel/NOTICE",
+    "greeter/__init__.py",
+    "greeter/build.py",
+    "greeter/forge.patch",
+    "greeter/greeter-lockscreen.patch",
+    "greeter/greeter-media.patch",
+    "greeter/install.py",
+    "greeter/recovery.py",
+    "greeter/release.json",
+    "greeter/NOTICE"
   ],
   "prebuilt": {
     "glibc_min": "2.35",

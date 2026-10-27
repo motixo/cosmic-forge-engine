@@ -110,3 +110,9 @@ The static libdisplay-info dependency retains its MIT notice in `LICENSE.libdisp
 Panel preferences use native profiles and optional `top_edge_gradient` and `forge_colors` keys. `forge_colors: Some((light: Some((r,g,b)), dark: None))` selects an RGB color in light mode and follows the COSMIC palette in dark mode, even with Forge closed. Original background preferences and Settings remain intact. Panel revision is independent of the compositor revision.
 
 To update an existing release, dispatch the release workflow with `component=panel` and `publish=true`. It replaces matching assets on the chosen existing tag and preserves other component assets. Forced tag updates run checks without rebuilding; keep that tag on the tested source commit.
+
+## Lock screen engine
+
+`python3 install.py --component greeter` installs the independent per-user locker; add `--build` to compile or `--restore` to select the stock system locker. It ports Veil into separate Background and Media player mods, controlled in Forge. Settings and the system login greeter are never replaced. Existing managed Veil locker launchers are backed up before migration. Wallpaper files and preferences survive Restore.
+
+Prebuilt lockers support pinned COSMIC 1.10/1.11 on x86_64 and ARM64 with glibc 2.39+ (Ubuntu/Pop!_OS 24.04+, current Fedora/Arch). Earlier glibc systems can build from source with matching development libraries. Artwork needs optional `curl` and `bubblewrap`; unavailable sandboxing shows a music icon. PAM uses the installed cosmic-greeter service or native Arch login service. Media monitoring and artwork tasks stop when disabled or unlocked.

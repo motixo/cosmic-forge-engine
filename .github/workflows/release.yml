@@ -9,7 +9,7 @@ on:
     inputs:
       component:
         type: choice
-        options: [panel, compositor, all]
+        options: [panel, compositor, greeter, all]
         default: panel
       publish:
         type: boolean
@@ -33,7 +33,7 @@ jobs:
           python-version: '3.11'
       - run: python -m unittest discover -s tests -p 'test_*.py' -v
       - run: python scripts/package_engine.py
-      - run: cat LICENSE LICENSE.libdisplay-info panel/NOTICE > build/release/LICENSES.txt
+      - run: cat LICENSE LICENSE.libdisplay-info panel/NOTICE greeter/NOTICE > build/release/LICENSES.txt
       - id: versions
         env:
           COMPONENT: ${{ inputs.component || 'all' }}
@@ -41,8 +41,8 @@ jobs:
           python - <<'PYTHON' >> "$GITHUB_OUTPUT"
           import json, os
           selected = os.environ['COMPONENT']
-          components = ['compositor', 'panel'] if selected == 'all' else [selected]
-          matrix = [{'component': c, 'version': v, 'runner': r} for c in components for v in json.load(open('release.json'))['sources'] for r in ['ubuntu-22.04', 'ubuntu-22.04-arm']]
+          components = ['compositor', 'panel', 'greeter'] if selected == 'all' else [selected]
+          matrix = [{'component': c, 'version': v, 'runner': r} for c in components for v in json.load(open('release.json'))['sources'] for r in (['ubuntu-24.04', 'ubuntu-24.04-arm'] if c == 'greeter' else ['ubuntu-22.04', 'ubuntu-22.04-arm'])]
           print('value=' + json.dumps({'include': matrix}))
           PYTHON
       - uses: actions/upload-artifact@v4
@@ -71,7 +71,7 @@ jobs:
       - name: Native build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential pkg-config cmake meson ninja-build hwdata libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libfontconfig-dev libpixman-1-dev
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config cmake meson ninja-build hwdata libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libfontconfig-dev libpixman-1-dev libpam0g-dev libdav1d-dev libssl-dev libpulse-dev libclang-dev libxcb1-dev libx11-dev
       - uses: actions/cache@v4
         with:
           path: |
@@ -79,8 +79,8 @@ jobs:
             ~/.cargo/git
             build/portable-target
             build/portable-native
-          key: ${{ matrix.component }}-${{ runner.arch }}-${{ matrix.version }}-rust1.93-glibc2.35-${{ hashFiles('runtime.rs', 'loader.rs', 'patches/*', 'glass.frag', 'scripts/build_binary.py', 'build.py', 'panel/*') }}
-          restore-keys: ${{ matrix.component }}-${{ runner.arch }}-${{ matrix.version }}-rust1.93-glibc2.35-
+          key: ${{ matrix.component }}-${{ matrix.runner }}-${{ runner.arch }}-${{ matrix.version }}-rust1.93-glibc2.35-${{ hashFiles('runtime.rs', 'loader.rs', 'patches/*', 'glass.frag', 'scripts/build_binary.py', 'build.py', 'panel/*', 'greeter/*') }}
+          restore-keys: ${{ matrix.component }}-${{ matrix.runner }}-${{ runner.arch }}-${{ matrix.version }}-rust1.93-glibc2.35-
       - name: Build portable component
         env:
           COSMIC_VERSION: ${{ matrix.version }}
