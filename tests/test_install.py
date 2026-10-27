@@ -3,6 +3,7 @@ import importlib.util
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import tempfile
 import sys
@@ -188,6 +189,49 @@ class EngineInstallerTests(unittest.TestCase):
                 self.assertIn('%{EPOCHNUM}', text)
             else:
                 self.assertIn('${db:Status-Status}', text)
+
+    def test_native_launch_guards_fall_back_after_package_changes(self):
+        import subprocess
+        for manager, version in [('rpm', '0:1.10.0-2.fc43'), ('dpkg-query', '1.10.0-1pop1 installed')]:
+            prefix = self.prefix / manager
+            launcher = prefix / 'bin/cosmic-comp'
+            launcher.parent.mkdir(parents=True)
+            previous = '#!/bin/sh\necho ORIGINAL\n'
+            launcher.write_text(previous)
+            launcher.chmod(0o755)
+            legacy = prefix / 'state/cosmic-crystal/installation.json'
+            legacy.parent.mkdir(parents=True)
+            legacy.write_text(json.dumps({'shims': {'cosmic-comp': previous}}))
+            packages = {name: name + ' ' + version for name in installer.PACKAGES}
+            with patch.object(installer, 'package_manager', return_value=manager), \
+                 patch.object(installer.subprocess, 'check_output', return_value=PIN):
+                installer.install(self.binary, packages, '1.10.0', prefix)
+            record = json.loads((prefix / 'state/cosmic-forge/engine-installation.json').read_text())
+            # A shell fixture stands in for the installed executable while checking shell guards.
+            executable = Path(record['destination']) / 'cosmic-comp'
+            executable.write_text('#!/bin/sh\necho FORGE\n')
+            values = prefix / 'packages.json'
+            values.write_text(json.dumps(packages))
+            query = prefix / 'bin' / manager
+            query.write_text('#!/usr/bin/python3\nimport json,sys\nfrom pathlib import Path\n'
+                             'print(json.loads(Path(' + repr(str(values)) + ').read_text())[sys.argv[-1]])\n')
+            query.chmod(0o755)
+            environment = dict(os.environ, PATH=str(prefix / 'bin') + ':' + os.environ['PATH'])
+            self.assertEqual(subprocess.check_output([str(launcher)], env=environment, text=True).strip(), 'FORGE')
+            packages['cosmic-comp'] += '.updated'
+            values.write_text(json.dumps(packages))
+            self.assertEqual(subprocess.check_output([str(launcher)], env=environment, text=True).strip(), 'ORIGINAL')
+
+    def test_missing_prebuilt_never_starts_an_implicit_source_build(self):
+        previous, _, _ = self.legacy()
+        with patch.object(sys, 'argv', ['install.py', '--prefix', str(self.prefix)]), \
+             patch.object(installer, 'installed_packages', return_value=(PACKAGES, '1.10.0')), \
+             patch.object(installer, 'obtain', side_effect=RuntimeError('No prebuilt asset; use Build compositor')), \
+             patch.object(installer.subprocess, 'run', side_effect=AssertionError('Must not build')):
+            with self.assertRaises(RuntimeError):
+                installer.main()
+        self.assertEqual(self.launcher.read_bytes(), previous)
+        self.assertFalse(self.record.exists())
 
     def test_missing_or_changed_renderer_is_not_reported_as_installed(self):
         self.install()

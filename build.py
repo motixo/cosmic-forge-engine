@@ -51,7 +51,7 @@ def prepare(source, version, local=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--cosmic-version', choices=['1.10.0', '1.11.0'], required=True)
+    parser.add_argument('--cosmic-version', choices=list(json.loads((ROOT / 'release.json').read_text())['sources']), required=True)
     parser.add_argument('--source', type=Path, help='Use an existing upstream Git checkout as a local clone source')
     parser.add_argument('--work-dir', type=Path)
     parser.add_argument('--target-dir', type=Path)
