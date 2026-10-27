@@ -86,6 +86,11 @@ jobs:
           COSMIC_VERSION: ${{ matrix.version }}
           COMPONENT: ${{ matrix.component }}
         run: python scripts/build_binary.py --component "$COMPONENT" --cosmic-version "$COSMIC_VERSION"
+      - name: Check the sandbox artwork decoder
+        if: matrix.component == 'greeter'
+        env:
+          FORGE_MEDIA_BINARY: build/bin/cosmic-greeter
+        run: python -m unittest discover -s tests -p 'test_media.py' -v
       - uses: actions/upload-artifact@v4
         with:
           name: binary-${{ matrix.component }}-${{ matrix.version }}-${{ runner.arch }}
