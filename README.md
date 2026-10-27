@@ -5,11 +5,14 @@ a mod manager for COSMIC. This repository owns the pinned COSMIC patches, shader
 runtime, builders and installers. Veil background and media support lives in `greeter/`. Penumbra and independent light/dark panel colors live in `panel/`. [Glass shaders](https://github.com/motixo/cosmic-forge-shaders)
 have their own repository. No replacement COSMIC Settings is installed.
 
+[Install COSMIC Forge](https://github.com/motixo/cosmic-forge#install) using the
+one-line installer or native DEB, RPM and Arch packages, then open **Settings → Engine**.
+
 Forge Settings downloads the latest stable `cosmic-forge-engine.json` release,
 checks its SHA-256 digest and ABI, then runs the installer.
 **Install compositor** downloads a compressed, verified prebuilt executable;
-**Build compositor** explicitly builds pinned source. Neither action silently
-switches to the other method. Compatible engine fixes
+Source builds are available through `python3 install.py --build` in this repository.
+The app's Install action never starts a source build. Compatible engine fixes
 and renderer updates need no new app release. Installation supports Arch Linux, Fedora, Ubuntu, Pop!_OS and derivatives.
 Published upstream pins currently cover COSMIC 1.10.0 and 1.11.0. New tested
 versions from 1.10 onward are added to `release.json` without app updates.
