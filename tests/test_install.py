@@ -14,7 +14,9 @@ sys.path.insert(0, str(ROOT))
 spec = importlib.util.spec_from_file_location('engine_install', ROOT / 'install.py')
 installer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(installer)
-PIN = json.loads((ROOT / 'release.json').read_text())['sources']['1.10.0']
+RELEASE = json.loads((ROOT / 'release.json').read_text())
+PIN = RELEASE['sources']['1.10.0']
+REVISION = RELEASE['renderer_revision']
 PACKAGES = {name: name + ' 1:1.10.0-1' for name in installer.PACKAGES}
 
 
@@ -116,8 +118,7 @@ class EngineInstallerTests(unittest.TestCase):
     def test_same_renderer_skips_build_and_preserves_installed_files(self):
         self.install()
         record = json.loads(self.record.read_text())
-        # Initial Forge installs have no revision field and represent revision 1.
-        record.pop('renderer_revision')
+        self.assertEqual(record['renderer_revision'], REVISION)
         self.record.write_text(json.dumps(record))
         binary = Path(record['destination']) / 'cosmic-comp'
         before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in [self.launcher, self.record, binary]}
@@ -137,10 +138,16 @@ class EngineInstallerTests(unittest.TestCase):
         self.assertTrue(installer.already_installed(record, PACKAGES, '1.10.0', self.prefix))
         record['renderer_revision'] = 0
         self.assertFalse(installer.already_installed(record, PACKAGES, '1.10.0', self.prefix))
-        record['renderer_revision'] = 1
+        record['renderer_revision'] = REVISION
         updated = dict(PACKAGES, **{'cosmic-comp': 'cosmic-comp 1:1.10.0-2'})
         self.assertFalse(installer.already_installed(record, updated, '1.10.0', self.prefix))
         self.assertFalse(installer.already_installed(record, PACKAGES, '1.11.0', self.prefix))
+
+    def test_initial_revision_one_record_needs_the_generic_renderer_update(self):
+        self.install()
+        record = json.loads(self.record.read_text())
+        record.pop('renderer_revision')
+        self.assertEqual(installer.already_installed(record, PACKAGES, '1.10.0', self.prefix), REVISION == 1)
 
     def test_missing_or_changed_renderer_is_not_reported_as_installed(self):
         self.install()

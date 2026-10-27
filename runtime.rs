@@ -32,6 +32,13 @@ pub fn identifier(value: &str) -> bool {
 }
 
 impl RuntimeEffect {
+    pub fn glass_blur(&self) -> u8 {
+        self.parameters
+            .iter()
+            .find(|p| p.name == "forge_blur")
+            .map_or(45, |p| p.value.clamp(0.0, 100.0) as u8)
+    }
+
     pub fn valid(&self) -> bool {
         self.abi == ABI
             && !self.id.is_empty()
@@ -40,7 +47,7 @@ impl RuntimeEffect {
                 .id
                 .bytes()
                 .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-')
-            && matches!(self.base.as_str(), "crystal" | "aero")
+            && matches!(self.base.as_str(), "crystal" | "aero" | "glass")
             && !self.source.trim().is_empty()
             && self.source.len() <= MAX_SHADER
             && !self.source.contains('\0')

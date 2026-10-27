@@ -28,7 +28,7 @@ pub fn configure(config: &cosmic_config::Config) {
         .filter(|effect| effect.valid() && effect.id == selected)
         .map(Arc::new);
     if let Some(effect) = &runtime {
-        blur_effect::set_glass_effect(if effect.base == "aero" { 2 } else { 1 });
+        blur_effect::set_glass_effect(match effect.base.as_str() { "glass" => 3, "aero" => 2, _ => 1 });
     }
     let mut current = CURRENT.lock().unwrap();
     if current.1 != runtime {
@@ -71,6 +71,7 @@ pub fn program<R: AsGlowRenderer>(
     }
     let mut uniforms = vec![
         UniformName::new("geo_size", UniformType::_2f),
+        UniformName::new("output_scale", UniformType::_1f),
         UniformName::new("corner_radius", UniformType::_4f),
         UniformName::new("input_to_geo", UniformType::Matrix3x3),
         UniformName::new("sharp_tex", UniformType::_1i),

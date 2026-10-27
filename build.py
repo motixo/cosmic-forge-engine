@@ -20,7 +20,7 @@ def prepare(source, version, local=None):
     release = json.loads((ROOT / 'release.json').read_text())
     pin = release['sources'][version]
     files = [ROOT / 'patches/glass.patch', ROOT / 'patches/runtime.patch',
-             ROOT / 'runtime.rs', ROOT / 'loader.rs']
+             ROOT / 'patches/generic.patch', ROOT / 'runtime.rs', ROOT / 'loader.rs', ROOT / 'glass.frag']
     expected = {'commit': pin, 'sha256': {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in files}}
     marker = source / '.forge-source.json'
     if marker.exists():
@@ -37,12 +37,13 @@ def prepare(source, version, local=None):
         subprocess.run(['git', 'init', '-q', str(source)], check=True)
         subprocess.run(['git', 'fetch', '--depth', '1', release['upstream'], pin], cwd=source, check=True)
         subprocess.run(['git', 'checkout', '--detach', 'FETCH_HEAD'], cwd=source, check=True)
-    for patch in files[:2]:
+    for patch in files[:3]:
         subprocess.run(['git', 'apply', '--check', str(patch)], cwd=source, check=True)
         subprocess.run(['git', 'apply', str(patch)], cwd=source, check=True)
     destination = source / 'src/backend/render/wayland'
     shutil.copy2(ROOT / 'runtime.rs', destination / 'forge_runtime.rs')
     shutil.copy2(ROOT / 'loader.rs', destination / 'forge_loader.rs')
+    shutil.copy2(ROOT / 'glass.frag', destination.parent / 'shaders/forge_glass.frag')
     (source / 'build.rs').write_text(f'fn main() {{ println!("cargo:rustc-env=GIT_HASH={pin}"); }}\n')
     marker.write_text(json.dumps(expected, indent=2) + '\n')
 

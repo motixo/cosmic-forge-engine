@@ -8,8 +8,10 @@ import time
 from PIL import ImageChops, ImageGrab, ImageStat
 
 ROOT = Path(__file__).resolve().parents[1]
-(ROOT / 'build/assets').mkdir(parents=True, exist_ok=True)
-(ROOT / 'build/logs').mkdir(parents=True, exist_ok=True)
+ASSETS = Path(os.environ.get('CRYSTAL_QA_ASSETS_DIR', ROOT / 'build/assets'))
+ASSETS.mkdir(parents=True, exist_ok=True)
+REPORTS = Path(os.environ.get('CRYSTAL_QA_REPORT_DIR', ROOT / 'build/logs'))
+REPORTS.mkdir(parents=True, exist_ok=True)
 RUN = Path(os.environ['CRYSTAL_QA_DIR'])
 STATE = json.loads((RUN / 'state.json').read_text())
 CONFIG = RUN / 'config/cosmic/com.system76.CosmicComp/v1'
@@ -32,7 +34,7 @@ def setting(key, value):
 def grab(name=None):
     image = ImageGrab.grab(xdisplay=STATE['display']).convert('RGB')
     if name:
-        image.save(ROOT / 'build/assets' / (name + '.png'))
+        image.save(ASSETS / (name + '.png'))
     return image
 
 
@@ -185,6 +187,6 @@ finally:
             path.unlink(missing_ok=True)
         else:
             path.write_bytes(content)
-    (ROOT / 'build/logs/aero-render-results.json').write_text(json.dumps(RESULTS, indent=2) + '\n')
+    (REPORTS / 'aero-render-results.json').write_text(json.dumps(RESULTS, indent=2) + '\n')
 
 print(f'{len(RESULTS)} Aero render checks passed')

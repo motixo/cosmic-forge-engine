@@ -1,5 +1,5 @@
 {
-  "renderer_revision": 1,
+  "renderer_revision": 2,
   "upstream": "https://github.com/pop-os/cosmic-comp.git",
   "sources": {
     "1.10.0": "41497b42d9744d9963c4c6d17e8add49489b45ee",
@@ -14,6 +14,8 @@
     "runtime.rs",
     "loader.rs",
     "patches/glass.patch",
-    "patches/runtime.patch"
+    "patches/runtime.patch",
+    "patches/generic.patch",
+    "glass.frag"
   ]
 }

@@ -49,6 +49,10 @@ Forge requires `install.py`, `build.py`, `recovery.py` and `release.json`.
 A stable `engine-v*` tag runs tests and publishes `cosmic-forge-engine.json`.
 Increment `renderer_revision` when changing compositor patches or runtime code;
 installer-only fixes keep the existing revision to avoid needless rebuilds.
+Renderer revision 2 adds the neutral `glass` pipeline with independent
+`forge_blur`, sharp/blurred background, geometry, scale and theme inputs. Aero and
+Crystal behavior stays compatible. `glass.frag` is its neutral fallback;
+`patches/generic.patch` extends the existing rendering path.
 Keep ABI 1 compatible with installed Forge apps. Breaking the runtime/bundle
 contract requires a new ABI and a matching app release. Helpers emit
 `FORGE_PROGRESS:<stage>` for the app's progress bar.
@@ -64,6 +68,7 @@ python build_test_surface.py
 python preview.py --headless --effect aero
 # In another terminal:
 CRYSTAL_QA_DIR="$PWD/build/preview" python tests/verify_aero.py
+CRYSTAL_QA_DIR="$PWD/build/preview" python tests/verify_generic.py
 FORGE_SHADERS_DIR=/path/cosmic-forge-shaders \
   CRYSTAL_QA_DIR="$PWD/build/preview" python tests/verify_packs.py
 touch build/preview/stop

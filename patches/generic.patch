@@ -1,0 +1,133 @@
+--- a/src/backend/render/wayland/blur_effect.rs
++++ b/src/backend/render/wayland/blur_effect.rs
+@@ -38,8 +38,9 @@
+ pub static BLUR_DOWNSAMPLE_SHADER: &str = include_str!("../shaders/blur_downsample.frag");
+ pub static BLUR_UPSAMPLE_SHADER: &str = include_str!("../shaders/blur_upsample.frag");
+ static CRYSTAL_SHADER: &str = include_str!("../shaders/crystal.frag");
+-
+-// 0: stock frosted glass; 1: Crystal; 2: Aero. One atomic keeps selection coherent.
++static GLASS_SHADER: &str = include_str!("../shaders/forge_glass.frag");
++
++// 0: stock Frosted; 1: Crystal; 2: Aero; 3: generic glass.
+ static GLASS_EFFECT: AtomicU8 = AtomicU8::new(0);
+ static AERO_BLUR: AtomicU8 = AtomicU8::new(45);
+ static AERO_COLOR: AtomicU8 = AtomicU8::new(55);
+@@ -55,7 +56,7 @@
+ 
+ /// Shared with all render threads, including compositor-owned menus.
+ pub fn set_glass_effect(effect: u8) {
+-    GLASS_EFFECT.store(effect.min(2), Ordering::Relaxed);
++    GLASS_EFFECT.store(effect.min(3), Ordering::Relaxed);
+ }
+ 
+ pub fn set_aero_blur(amount: u8) {
+@@ -149,6 +150,7 @@
+     up: GlesTexProgram,
+     crystal: GlesTexProgram,
+     aero: GlesTexProgram,
++    glass: GlesTexProgram,
+ }
+ 
+ impl BlurShaders {
+@@ -198,11 +200,26 @@
+                 UniformName::new("theme_accent", UniformType::_3f),
+             ],
+         )?;
++        let glass = renderer.compile_custom_texture_shader(
++            GLASS_SHADER,
++            &[
++                UniformName::new("geo_size", UniformType::_2f),
++                UniformName::new("corner_radius", UniformType::_4f),
++                UniformName::new("input_to_geo", UniformType::Matrix3x3),
++                UniformName::new("sharp_tex", UniformType::_1i),
++                UniformName::new("blur_amount", UniformType::_1f),
++                UniformName::new("uv_per_pixel", UniformType::_2f),
++                UniformName::new("output_scale", UniformType::_1f),
++                UniformName::new("theme_tint", UniformType::_3f),
++                UniformName::new("theme_accent", UniformType::_3f),
++            ],
++        )?;
+         Ok(BlurShaders {
+             up,
+             down,
+             crystal,
+             aero,
++            glass,
+         })
+     }
+ 
+@@ -356,7 +373,7 @@
+     ) -> Result<Option<Self>, R::Error> {
+         let (runtime_revision, runtime) = forge_loader::current();
+         let effect = runtime.as_ref().map_or_else(|| GLASS_EFFECT.load(Ordering::Relaxed),
+-            |effect| if effect.base == "aero" { 2 } else { 1 });
++            |effect| match effect.base.as_str() { "glass" => 3, "aero" => 2, _ => 1 });
+         if (strength == 0 && effect == 0) || geometry.size.w == 0. || geometry.size.h == 0. {
+             return Ok(None);
+         }
+@@ -365,13 +382,16 @@
+         let mut extended_geo = geo;
+         let crystal = effect == 1;
+         let aero = effect == 2;
+-        let custom_glass = crystal || aero;
++        let generic = effect == 3;
++        let custom_glass = crystal || aero || generic;
+         let aero_color = AERO_COLOR.load(Ordering::Relaxed);
+         let aero_reflections = AERO_REFLECTIONS.load(Ordering::Relaxed);
+         let theme_accent = *AERO_ACCENT.lock().unwrap();
+         let everyday = CRYSTAL_EVERYDAY.load(Ordering::Relaxed);
+         let theme_tint = *CRYSTAL_TINT.lock().unwrap();
+-        let blur_amount = if aero {
++        let blur_amount = if generic {
++            runtime.as_ref().map_or(45, |effect| effect.glass_blur())
++        } else if aero {
+             AERO_BLUR.load(Ordering::Relaxed)
+         } else {
+             CRYSTAL_BLUR.load(Ordering::Relaxed)
+@@ -479,6 +499,17 @@
+                 ),
+             ]);
+         }
++        if generic {
++            uniforms.pop();
++            uniforms.extend([
++                Uniform::new("sharp_tex", 1_i32),
++                Uniform::new("blur_amount", f32::from(blur_amount) / 100.0),
++                Uniform::new("uv_per_pixel", (1.0 / geometry.size.w as f32, 1.0 / geometry.size.h as f32)),
++                Uniform::new("output_scale", output_scale as f32),
++                Uniform::new("theme_tint", (theme_tint[0], theme_tint[1], theme_tint[2])),
++                Uniform::new("theme_accent", (theme_accent[0], theme_accent[1], theme_accent[2])),
++            ]);
++        }
+         let extended_offset = Point::<f64, Physical>::new(radius, radius).to_logical(output_scale);
+ 
+         let renderer_id = renderer.glow_renderer().context_id();
+@@ -522,6 +553,10 @@
+                     && state.thickness == thickness
+                     && state.everyday == everyday
+                     && state.theme_tint == theme_tint))
++            && (!generic
++                || (state.blur_amount == blur_amount
++                    && state.theme_tint == theme_tint
++                    && state.theme_accent == theme_accent))
+             && state.refraction == refraction
+             && state.density == density
+             && &state.region == region
+@@ -557,6 +592,8 @@
+             scaling_shaders: BlurShaders::get(renderer),
+             render_shader: if let Some(program) = runtime_program {
+                 program
++            } else if generic {
++                BlurShaders::get(renderer).glass
+             } else if aero {
+                 BlurShaders::get(renderer).aero
+             } else if crystal {
+@@ -576,7 +613,7 @@
+                 .collect(),
+             uniforms,
+             crystal: custom_glass,
+-            uneven_blur: custom_glass && blur_amount > 0 && blur_amount < 100,
++            uneven_blur: blur_amount > 0 && (generic || (custom_glass && blur_amount < 100)),
+         }))
+     }
+ }
