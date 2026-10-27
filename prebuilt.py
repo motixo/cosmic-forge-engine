@@ -22,7 +22,7 @@ def architecture():
         return 'x86_64'
     if machine in ('aarch64', 'arm64'):
         return 'aarch64'
-    raise RuntimeError('No prebuilt compositor for this architecture; use Build compositor')
+    raise RuntimeError('No prebuilt engine binary for this architecture; build from source')
 
 
 def program_name(component):
@@ -55,7 +55,7 @@ def from_release(release, version, machine, cache, fetch=download, component='co
         raise RuntimeError('Invalid engine release metadata')
     asset = next((a for a in release['assets'] if isinstance(a, dict) and a.get('name') == name), None)
     if asset is None:
-        raise RuntimeError('No prebuilt compositor for this COSMIC version/architecture; use Build compositor')
+        raise RuntimeError('No prebuilt engine binary for this COSMIC version/architecture; build from source')
     url = asset.get('browser_download_url', '')
     checksum = asset.get('digest', '')
     size = asset.get('size')
@@ -114,8 +114,8 @@ def obtain(version, config, tag=None, prefix=None, component='compositor'):
     minimum = tuple(int(part) for part in config['prebuilt']['glibc_min'].split('.'))
     libc, current = platform.libc_ver()
     if libc != 'glibc' or tuple(int(part) for part in current.split('.')) < minimum:
-        raise RuntimeError('Prebuilt compositors require glibc ' + config['prebuilt']['glibc_min'] +
-                           ' or newer; use Build compositor')
+        raise RuntimeError('Prebuilt engine binaries require glibc ' + config['prebuilt']['glibc_min'] +
+                           ' or newer; build from source')
     cache = (prefix / 'cache' if prefix else xdg('XDG_CACHE_HOME', '.cache')) / 'cosmic-forge/binaries'
     binary = from_release(release_metadata(tag), version, architecture(), cache, component=component)
     marker = '-forge-panel-r' if component == 'panel' else '-forge-r'
@@ -124,7 +124,7 @@ def obtain(version, config, tag=None, prefix=None, component='compositor'):
     try:
         output = subprocess.check_output([str(binary), '--version'], text=True, stderr=subprocess.STDOUT, timeout=15)
     except (OSError, subprocess.SubprocessError) as error:
-        raise RuntimeError('This prebuilt compositor cannot run on the installed libraries; use Build compositor') from error
+        raise RuntimeError('This prebuilt engine binary cannot run on the installed libraries; build from source') from error
     if expected not in output:
         raise RuntimeError('Prebuilt compositor revision does not match this engine package')
     return binary
