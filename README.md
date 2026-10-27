@@ -6,7 +6,7 @@ runtime, builders and installers. Veil background and media support lives in `gr
 have their own repository. No replacement COSMIC Settings is installed.
 
 [Install COSMIC Forge](https://github.com/motixo/cosmic-forge#install) using the
-one-line installer or native DEB, RPM and Arch packages, then open **Settings → Engine**.
+one-line installer or native DEB, RPM and Arch packages, then open **Settings → Patches**.
 
 Forge Settings downloads the latest stable `cosmic-forge-engine.json` release,
 checks its SHA-256 digest and ABI, then runs the installer.
