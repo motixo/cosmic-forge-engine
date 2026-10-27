@@ -6,9 +6,16 @@ runtime, builder and installer. [Glass shaders](https://github.com/motixo/cosmic
 have their own repository. No replacement COSMIC Settings is installed.
 
 Forge Settings downloads the latest stable `cosmic-forge-engine.json` release,
-checks its SHA-256 digest and ABI, then runs the installer. Compatible engine fixes
-and renderer updates need no new app release. Installation currently supports
-Arch Linux and derivatives with matching COSMIC 1.10.0 or 1.11.0 packages.
+checks its SHA-256 digest and ABI, then runs the installer.
+**Install compositor** downloads a compressed, verified prebuilt executable;
+**Build compositor** explicitly builds pinned source. Neither action silently
+switches to the other method. Compatible engine fixes
+and renderer updates need no new app release. Installation supports Arch Linux, Fedora, Ubuntu, Pop!_OS and derivatives.
+Published upstream pins currently cover COSMIC 1.10.0 and 1.11.0. New tested
+versions from 1.10 onward are added to `release.json` without app updates.
+Unpublished versions are refused. RPM/DPKG/Arch package versions are captured
+exactly for the launcher guards. Pop snapshot versions can resolve their pinned
+commit from package metadata or the original system compositor.
 
 ## Build and test
 
@@ -19,6 +26,8 @@ python -m unittest discover -s tests -p 'test_*.py' -v
 python scripts/package_engine.py
 python build.py --cosmic-version 1.10.0
 # Or 1.11.0. The executable is build/bin/cosmic-comp.
+python install.py                 # Install the matching prebuilt release
+python install.py --build         # Build and install from pinned source
 python install.py --binary "$PWD/build/bin/cosmic-comp"
 python recovery.py
 ```
@@ -46,7 +55,21 @@ files there when needed. The format is `{ "format": 1, "abi": 1, "files": { "pat
 letters, digits, dots, underscores and hyphens, with no empty or dot segments.
 Forge requires `install.py`, `build.py`, `recovery.py` and `release.json`.
 
-A stable `engine-v*` tag runs tests and publishes `cosmic-forge-engine.json`.
+A stable `engine-v*` tag runs tests, builds native x86_64 and ARM64 binaries for
+every pinned COSMIC version, and publishes them with `cosmic-forge-engine.json`.
+The release waits for every build to pass. `workflow_dispatch` can test the full
+build matrix before tagging. Binaries are built on Ubuntu 22.04 with Rust 1.93.0
+and baseline glibc 2.35. libdisplay-info 0.3.0 is checksum-pinned and statically
+linked; other runtime libraries use the installed desktop system. The publisher
+checks ELF dependencies, symbol requirements and `--version`. XZ compression
+reduces download size. The installer checks repository, SHA-256, download size,
+decompression limits, architecture and embedded upstream/renderer revision before
+changing launchers. Missing assets or incompatible libraries suggest **Build**.
+
+Prebuilt assets: `cosmic-comp-<version>-linux-<x86_64|aarch64>.xz`. Native builds
+reuse `$XDG_CACHE_HOME/cosmic-forge/engine-target/<version>` across engine releases;
+`COSMIC_FORGE_ENGINE_TARGET` can override it. Neither installer installs system
+packages or development tools. The original system compositor remains intact.
 Increment `renderer_revision` when changing compositor patches or runtime code;
 installer-only fixes keep the existing revision to avoid needless rebuilds.
 Renderer revision 2 adds the neutral `glass` pipeline with independent
@@ -77,3 +100,5 @@ touch build/preview/stop
 The patches retain the original COSMIC Crystal optics, Aero, native Frosted Glass
 integration and upstream notices. GPL-3.0-only; upstream dependencies retain their
 own licenses.
+
+The static libdisplay-info dependency retains its MIT notice in `LICENSE.libdisplay-info` and the engine bundle.

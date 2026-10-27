@@ -5,6 +5,7 @@ on:
     branches: [main]
     tags: ['engine-v*']
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -12,6 +13,8 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    outputs:
+      versions: ${{ steps.versions.outputs.value }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -19,14 +22,59 @@ jobs:
           python-version: '3.11'
       - run: python -m unittest discover -s tests -p 'test_*.py' -v
       - run: python scripts/package_engine.py
+      - run: cat LICENSE LICENSE.libdisplay-info > build/release/LICENSES.txt
+      - id: versions
+        run: python -c 'import json; print("value=" + json.dumps(list(json.load(open("release.json"))["sources"])))' >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
           name: engine-package
-          path: build/release/cosmic-forge-engine.json
+          path: build/release/*
+
+  binary:
+    if: startsWith(github.ref, 'refs/tags/engine-v') || github.event_name == 'workflow_dispatch'
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ${{ fromJSON(needs.check.outputs.versions) }}
+        runner: [ubuntu-22.04, ubuntu-22.04-arm]
+    runs-on: ${{ matrix.runner }}
+    env:
+      RUSTUP_TOOLCHAIN: '1.93.0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: '1.93.0'
+          rustflags: ''
+      - name: Native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config cmake meson ninja-build hwdata libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libfontconfig-dev libpixman-1-dev
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            build/portable-target
+            build/portable-native
+          key: compositor-${{ runner.arch }}-${{ matrix.version }}-rust1.93-glibc2.35-${{ hashFiles('runtime.rs', 'loader.rs', 'patches/*', 'glass.frag', 'scripts/build_binary.py', 'build.py') }}
+          restore-keys: compositor-${{ runner.arch }}-${{ matrix.version }}-rust1.93-glibc2.35-
+      - name: Build portable compositor
+        env:
+          COSMIC_VERSION: ${{ matrix.version }}
+        run: python scripts/build_binary.py --cosmic-version "$COSMIC_VERSION"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.version }}-${{ runner.arch }}
+          path: build/release/cosmic-comp-*.xz
 
   release:
     if: startsWith(github.ref, 'refs/tags/engine-v')
-    needs: check
+    needs: [check, binary]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -35,9 +83,14 @@ jobs:
         with:
           name: engine-package
           path: release
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: binary-*
+          merge-multiple: true
+          path: release
       - name: Publish engine sources
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
-        run: gh release create "$TAG" release/cosmic-forge-engine.json --verify-tag --latest --title "$TAG" --notes 'Independent compositor engine package for COSMIC Forge. Install or update from Forge Settings. The bundle includes its ABI and renderer revision.'
+        run: gh release create "$TAG" release/* --verify-tag --latest --title "$TAG" --notes 'Prebuilt compositors for tested COSMIC releases from 1.10 onward, on x86_64 and ARM64 Linux with glibc 2.35+. Supports Arch, Fedora, Ubuntu and Pop!_OS. Install downloads a verified binary; Build compiles pinned source. Restore preserves preferences and selects the original system compositor.'

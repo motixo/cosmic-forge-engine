@@ -7,16 +7,16 @@ import fcntl
 import json
 import os
 from pathlib import Path
-import platform
 import re
 import shlex
 import subprocess
 import time
 
-from recovery import atomic, digest, paths, progress, record_for, restore
+from recovery import atomic, digest, paths, progress, record_for, restore, xdg
+from platforms import PACKAGES, installed_packages, package_manager, package_query
+from prebuilt import obtain
 
 ROOT = Path(__file__).resolve().parent
-PACKAGES = ('cosmic-comp', 'cosmic-settings', 'cosmic-panel', 'cosmic-greeter')
 
 
 def already_installed(record, packages, version, prefix=None, candidate_digest=None):
@@ -41,25 +41,6 @@ def already_installed(record, packages, version, prefix=None, candidate_digest=N
 def report_already_installed():
     progress('already_installed')
     print('The matching Forge glass renderer is already installed. No rebuild or reinstall needed.', flush=True)
-
-
-def installed_packages():
-    release = platform.freedesktop_os_release()
-    if release.get('ID') != 'arch' and 'arch' not in release.get('ID_LIKE', '').split():
-        raise RuntimeError('The in-app renderer installer currently supports Arch Linux and derivatives')
-    packages = {}
-    versions = set()
-    for name in PACKAGES:
-        result = subprocess.run(['pacman', '-Q', name], check=True, capture_output=True, text=True)
-        package = result.stdout.strip()
-        match = re.fullmatch(re.escape(name) + r' (?:[0-9]+:)?(1\.(?:10|11)\.0)-[^\s]+', package)
-        if not match:
-            raise RuntimeError('Unsupported COSMIC package: ' + package)
-        packages[name] = package
-        versions.add(match[1])
-    if len(versions) != 1:
-        raise RuntimeError('Install matching COSMIC 1.10.0 or 1.11.0 packages first')
-    return packages, versions.pop()
 
 
 def install(binary, packages, version, prefix=None):
@@ -100,7 +81,7 @@ def install(binary, packages, version, prefix=None):
     if not executable.exists():
         atomic(executable, payload, 0o755)
     quote = shlex.quote
-    guard = ' && '.join('[ "$(' + shlex.join(['pacman', '-Q', name]) + ' 2>/dev/null)" = ' + quote(value) + ' ]'
+    guard = ' && '.join('[ "$(' + shlex.join(package_query(package_manager(), name)) + ' 2>/dev/null)" = ' + quote(value) + ' ]'
                         for name, value in packages.items())
     text = ('#!/bin/sh\n# Managed by cosmic-forge renderer\n'
             'if [ "${COSMIC_FORGE_DISABLE:-0}" != 1 ] && ' + guard +
@@ -110,7 +91,7 @@ def install(binary, packages, version, prefix=None):
     updated = {'abi': 1, 'renderer_revision': json.loads((ROOT / 'release.json').read_text())['renderer_revision'],
                'cosmic_version': version, 'destination': str(destination),
                'launcher': str(launcher), 'launcher_sha256': digest(text.encode()),
-               'binary_sha256': digest(payload), 'packages': packages, 'previous': previous}
+               'binary_sha256': digest(payload), 'packages': packages, 'package_manager': package_manager(), 'previous': previous}
     try:
         atomic(launcher, text.encode(), 0o755)
         atomic(record_file, (json.dumps(updated, indent=2) + '\n').encode())
@@ -126,8 +107,11 @@ def install(binary, packages, version, prefix=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--restore', action='store_true')
-    parser.add_argument('--binary', type=Path, help='Install an already built matching ABI 1 renderer')
+    action = parser.add_mutually_exclusive_group()
+    action.add_argument('--restore', action='store_true')
+    action.add_argument('--build', action='store_true', help='Build from pinned source instead of downloading a binary')
+    action.add_argument('--binary', type=Path, help='Install an already built matching ABI 1 renderer')
+    parser.add_argument('--release-tag', help='Use binary assets from the same release as the engine package')
     parser.add_argument('--prefix', type=Path, help='Private installation prefix for testing')
     args = parser.parse_args()
     if args.prefix:
@@ -148,16 +132,19 @@ def main():
             report_already_installed()
             return
         binary = args.binary
-        if binary is None:
+        if binary is None and args.build:
             work = ROOT / 'build/sources' / version
             if work.exists() and not (work / '.forge-source.json').exists():
                 work.rename(work.with_name(version + '-incomplete-' + str(time.time_ns())))
             command = ['python3', str(ROOT / 'build.py'), '--cosmic-version', version,
                        '--work-dir', str(work)]
-            if os.environ.get('COSMIC_FORGE_ENGINE_TARGET'):
-                command.extend(['--target-dir', os.environ['COSMIC_FORGE_ENGINE_TARGET']])
+            target = os.environ.get('COSMIC_FORGE_ENGINE_TARGET') or str(
+                (args.prefix / 'cache' if args.prefix else xdg('XDG_CACHE_HOME', '.cache')) / 'cosmic-forge/engine-target' / version)
+            command.extend(['--target-dir', target])
             subprocess.run(command, check=True)
             binary = ROOT / 'build/bin/cosmic-comp'
+        if binary is None:
+            binary = obtain(version, json.loads((ROOT / 'release.json').read_text()), args.release_tag, args.prefix)
         current_packages, current_version = installed_packages()
         if (packages, version) != (current_packages, current_version):
             raise RuntimeError('COSMIC packages changed during the build; run installation again')

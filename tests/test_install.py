@@ -149,6 +149,45 @@ class EngineInstallerTests(unittest.TestCase):
         record.pop('renderer_revision')
         self.assertEqual(installer.already_installed(record, PACKAGES, '1.10.0', self.prefix), REVISION == 1)
 
+    def test_default_install_downloads_and_build_is_an_explicit_action(self):
+        for build in (False, True):
+            args = ['install.py', '--prefix', str(self.prefix)] + (['--build'] if build else [])
+            with patch.object(sys, 'argv', args), \
+                 patch.object(installer, 'installed_packages', return_value=(PACKAGES, '1.10.0')), \
+                 patch.object(installer, 'obtain', return_value=self.binary) as obtain, \
+                 patch.object(installer, 'install') as install, \
+                 patch.object(installer.subprocess, 'run') as run:
+                installer.main()
+                install.assert_called_once()
+                self.assertEqual(obtain.call_count, 0 if build else 1)
+                self.assertEqual(run.call_count, 1 if build else 0)
+                if build:
+                    self.assertIn('--target-dir', run.call_args.args[0])
+
+    def test_package_change_during_download_preserves_the_active_launcher(self):
+        original, _, _ = self.legacy()
+        changed = dict(PACKAGES, **{'cosmic-comp': 'cosmic-comp 1:1.10.0-2'})
+        with patch.object(sys, 'argv', ['install.py', '--prefix', str(self.prefix)]), \
+             patch.object(installer, 'installed_packages', side_effect=[(PACKAGES, '1.10.0'), (changed, '1.10.0')]), \
+             patch.object(installer, 'obtain', return_value=self.binary):
+            with self.assertRaises(RuntimeError):
+                installer.main()
+        self.assertEqual(self.launcher.read_bytes(), original)
+        self.assertFalse(self.record.exists())
+
+    def test_rpm_and_dpkg_launch_guards_preserve_their_query_formats(self):
+        for manager in ['rpm', 'dpkg-query']:
+            self.launcher.unlink(missing_ok=True)
+            self.record.unlink(missing_ok=True)
+            with patch.object(installer, 'package_manager', return_value=manager):
+                self.install()
+            text = self.launcher.read_text()
+            self.assertIn(manager, text)
+            if manager == 'rpm':
+                self.assertIn('%{EPOCHNUM}', text)
+            else:
+                self.assertIn('${db:Status-Status}', text)
+
     def test_missing_or_changed_renderer_is_not_reported_as_installed(self):
         self.install()
         record = json.loads(self.record.read_text())
@@ -218,8 +257,8 @@ class EngineInstallerTests(unittest.TestCase):
         import subprocess
         def query(command, **_):
             return subprocess.CompletedProcess(command, 0, stdout=PACKAGES[command[-1]])
-        with patch.object(installer.platform, 'freedesktop_os_release', return_value={'ID': 'arch'}), patch.object(installer.subprocess, 'run', side_effect=query):
+        with patch('platforms.platform.freedesktop_os_release', return_value={'ID': 'arch'}), patch.object(installer.subprocess, 'run', side_effect=query):
             self.assertEqual(installer.installed_packages(), (PACKAGES, '1.10.0'))
-        with patch.object(installer.platform, 'freedesktop_os_release', return_value={'ID': 'unknown'}):
+        with patch('platforms.platform.freedesktop_os_release', return_value={'ID': 'unknown'}):
             with self.assertRaises(RuntimeError):
                 installer.installed_packages()

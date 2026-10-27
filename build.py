@@ -21,7 +21,8 @@ def prepare(source, version, local=None):
     pin = release['sources'][version]
     files = [ROOT / 'patches/glass.patch', ROOT / 'patches/runtime.patch',
              ROOT / 'patches/generic.patch', ROOT / 'runtime.rs', ROOT / 'loader.rs', ROOT / 'glass.frag']
-    expected = {'commit': pin, 'sha256': {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in files}}
+    binary_version = pin + '-forge-r' + str(release['renderer_revision'])
+    expected = {'commit': pin, 'binary_version': binary_version, 'sha256': {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in files}}
     marker = source / '.forge-source.json'
     if marker.exists():
         if json.loads(marker.read_text()) != expected:
@@ -44,7 +45,7 @@ def prepare(source, version, local=None):
     shutil.copy2(ROOT / 'runtime.rs', destination / 'forge_runtime.rs')
     shutil.copy2(ROOT / 'loader.rs', destination / 'forge_loader.rs')
     shutil.copy2(ROOT / 'glass.frag', destination.parent / 'shaders/forge_glass.frag')
-    (source / 'build.rs').write_text(f'fn main() {{ println!("cargo:rustc-env=GIT_HASH={pin}"); }}\n')
+    (source / 'build.rs').write_text(f'fn main() {{ println!("cargo:rustc-env=GIT_HASH={binary_version}"); }}\n')
     marker.write_text(json.dumps(expected, indent=2) + '\n')
 
 

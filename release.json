@@ -16,6 +16,17 @@
     "patches/glass.patch",
     "patches/runtime.patch",
     "patches/generic.patch",
-    "glass.frag"
-  ]
+    "glass.frag",
+    "platforms.py",
+    "prebuilt.py",
+    "LICENSE",
+    "LICENSE.libdisplay-info"
+  ],
+  "prebuilt": {
+    "glibc_min": "2.35",
+    "architectures": [
+      "x86_64",
+      "aarch64"
+    ]
+  }
 }
