@@ -53,7 +53,8 @@ def install(binary, packages, version, prefix=None):
         raise RuntimeError('Expected the native Forge ABI 1 panel')
     pins = json.loads((ROOT / 'release.json').read_text())['sources']
     output = subprocess.check_output([str(binary), '--version'], text=True, timeout=15)
-    if pins[version] not in output:
+    expected = pins[version] + '-forge-panel-r' + str(json.loads((ROOT / 'release.json').read_text())['revision'])
+    if expected not in output:
         raise RuntimeError('Panel does not match the installed COSMIC version')
     if already_installed(record, packages, version, prefix, digest(payload)):
         report_already_installed()

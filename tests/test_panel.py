@@ -21,7 +21,7 @@ class PanelTests(unittest.TestCase):
         self.prefix = Path(temp.name)
         self.binary = self.prefix / 'input'
         self.binary.write_bytes(b'\x7fELFforge-panel-engine-v1')
-        self.enterContext(patch.object(install.subprocess, 'check_output', return_value=CONFIG['sources']['1.10.0']))
+        self.enterContext(patch.object(install.subprocess, 'check_output', return_value=CONFIG['sources']['1.10.0'] + '-forge-panel-r1'))
         self.enterContext(patch.object(install, 'package_manager', return_value='pacman'))
         self.system = self.prefix / 'system'
         self.system.write_bytes(b'\x7fELFstock')
@@ -70,6 +70,12 @@ class PanelTests(unittest.TestCase):
         with patch.object(install, 'installed_packages', side_effect=[(PACKAGES, '1.10.0'), ({'cosmic-panel':'changed'}, '1.10.0')]), patch.object(install, 'obtain', return_value=self.binary):
             with self.assertRaises(RuntimeError):
                 install.run(args)
+        self.assertFalse((self.prefix / 'bin/cosmic-panel').exists())
+
+    def test_rejects_an_old_panel_revision(self):
+        with patch.object(install.subprocess, 'check_output', return_value=CONFIG['sources']['1.10.0'] + '-forge-panel-r0'):
+            with self.assertRaises(RuntimeError):
+                self.apply()
         self.assertFalse((self.prefix / 'bin/cosmic-panel').exists())
 
     def test_separate_panel_asset(self):
