@@ -30,7 +30,7 @@ python3 build.py --cosmic-version 1.10.0
 Requires Python 3.11+, Rust, Git and COSMIC compositor development libraries.
 Upstream commits and the shader ABI are pinned in `release.json`.
 
-Renderer revision 4 supports animated shaders, scene or wallpaper backgrounds,
-and window focus and theme inputs.
+Renderer revision 5 supports animated shaders, scene or wallpaper backgrounds,
+and window focus and theme inputs, including wallpaper rendering on built-in effects.
 
 GPL-3.0-only. Dependency notices are included in the repository.

@@ -172,6 +172,21 @@ try:
     click(left + 650, top + 35)
     grab('underlay-placement')
     sharp = SOURCE.replace('texture2D(tex, v_coords)', 'texture2D(sharp_tex, v_coords)')
+    for builtin in ['frosted', 'aero', 'crystal']:
+        (CONFIG / 'forge_runtime').unlink(missing_ok=True)
+        write(CONFIG / 'glass_effect', json.dumps(builtin))
+        write(CONFIG / 'forge_backdrop', 'scene')
+        time.sleep(.6)
+        scene = grab('builtin-scene-' + builtin)
+        write(CONFIG / 'forge_backdrop', 'wallpaper')
+        time.sleep(.6)
+        wallpaper = grab('builtin-wallpaper-' + builtin)
+        check(builtin + ' built-in wallpaper renders and excludes the underlying window',
+              difference(scene, wallpaper, body) > 5)
+        check(builtin + ' built-in wallpaper preserves opaque foreground',
+              difference(scene, wallpaper, (left + 25, top + 8, left + 790, top + 80)) == 0)
+    log = (RUN / 'compositor.log').read_text()
+    check('Built-in source changes do not submit unknown uniforms', 'UnknownUniform' not in log and 'was not declared when compiling' not in log)
     for base in ['glass', 'aero', 'crystal']:
         runtime(base=base)
         scene = grab('scene-under-' + base)

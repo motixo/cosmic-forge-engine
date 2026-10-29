@@ -12,7 +12,7 @@ on:
         default: false
       release_tag:
         type: string
-        default: engine-v0.5.0
+        default: engine-v0.5.1
 
 permissions:
   contents: read
@@ -63,7 +63,7 @@ jobs:
       - name: Native build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential pkg-config cmake meson ninja-build hwdata libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libfontconfig-dev libpixman-1-dev libpam0g-dev libdav1d-dev libssl-dev libpulse-dev libclang-dev libxcb1-dev libx11-dev
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config cmake meson ninja-build hwdata libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libgl1-mesa-dri libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libfontconfig-dev libpixman-1-dev libpam0g-dev libdav1d-dev libssl-dev libpulse-dev libclang-dev libxcb1-dev libx11-dev
       - uses: actions/cache@v4
         with:
           path: |

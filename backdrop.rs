@@ -410,19 +410,42 @@ mod tests {
         prepare(&mut renderer, &first).unwrap();
         let image = current(&mut renderer, 1.0, 0).unwrap().unwrap();
         paint(&mut renderer, &image, Color32F::new(1.0, 0.0, 0.0, 1.0));
-        for base in ["glass", "aero", "crystal"] {
+        let source = include_str!("../shaders/forge_glass.frag");
+        for (base, source) in [
+            ("glass", Some(source)),
+            ("aero", Some(source)),
+            ("crystal", Some(source)),
+            ("frosted", None),
+            ("aero", None),
+            ("crystal", None),
+            ("glass", Some("Invalid GLSL")),
+            ("aero", Some("Invalid GLSL")),
+            ("crystal", Some("Invalid GLSL")),
+        ] {
             let effect = super::super::forge_runtime::RuntimeEffect {
                 abi: 1,
                 id: "gpu-test".into(),
-                base: base.into(),
-                source: include_str!("../shaders/forge_glass.frag").into(),
+                base: if base == "frosted" { "glass" } else { base }.into(),
+                source: source.unwrap_or_default().into(),
                 animated: false,
                 backdrop: Backdrop::Wallpaper,
                 parameters: vec![],
             };
-            config.set("glass_effect", "gpu-test").unwrap();
+            config
+                .set(
+                    "glass_effect",
+                    if source.is_some() { "gpu-test" } else { base },
+                )
+                .unwrap();
             config.set("forge_runtime", effect).unwrap();
+            super::super::blur_effect::set_glass_effect(match base {
+                "frosted" => 0,
+                "aero" => 2,
+                "crystal" => 1,
+                _ => 3,
+            });
             forge_loader::configure(&config);
+            prepare(&mut renderer, &first).unwrap();
             let mut state = super::super::blur_effect::BlurState::default();
             let element = super::super::blur_effect::BlurElement::from_state(
                 &mut renderer,
@@ -463,7 +486,11 @@ mod tests {
             let sync = frame.finish().unwrap();
             drop(fb);
             renderer.wait(&sync).unwrap();
-            assert!(pixel_at(&mut renderer, &target, (50, 40))[0] > 200);
+            let interior = pixel_at(&mut renderer, &target, (50, 40));
+            assert!(
+                interior[0] > interior[2],
+                "{base} did not sample the red wallpaper"
+            );
             assert!(pixel_at(&mut renderer, &target, (16, 16))[2] > 200);
         }
     }

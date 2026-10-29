@@ -63,6 +63,15 @@ def main():
                    cwd=ROOT / 'build/portable-sources' / args.cosmic_version,
                    env=dict(environment, CARGO_TARGET_DIR=str(ROOT / 'build/portable-target' / args.cosmic_version),
                             CARGO_PROFILE_RELEASE_LTO='thin'), check=True)
+    qa = ROOT / 'build/gpu-qa' / args.cosmic_version
+    runtime = qa / 'runtime'
+    runtime.mkdir(parents=True, exist_ok=True, mode=0o700)
+    subprocess.run(['cargo', 'test', '--release', '--locked', '--offline', '--lib',
+                    'forge_backdrop::tests', '-j', str(args.jobs), '--', '--ignored'],
+                   cwd=ROOT / 'build/portable-sources' / args.cosmic_version,
+                   env=dict(environment, CARGO_TARGET_DIR=str(ROOT / 'build/portable-target' / args.cosmic_version),
+                            CARGO_PROFILE_RELEASE_LTO='thin', LIBGL_ALWAYS_SOFTWARE='1',
+                            FORGE_QA_ROOT=str(qa), XDG_RUNTIME_DIR=str(runtime)), check=True)
     binary = ROOT / 'build/bin/cosmic-comp'
     subprocess.run(['strip', '--strip-unneeded', str(binary)], check=True)
     subprocess.run([str(binary), '--version'], check=True)
