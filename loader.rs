@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
-use super::{blur_effect, forge_runtime::RuntimeEffect};
+use super::{
+    blur_effect,
+    forge_runtime::{Backdrop, RuntimeEffect},
+};
 use crate::backend::render::element::AsGlowRenderer;
 use smithay::backend::renderer::gles::{GlesRenderer, GlesTexProgram, UniformName, UniformType};
 use std::{
@@ -9,7 +12,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-static CURRENT: Mutex<(u64, Option<Arc<RuntimeEffect>>)> = Mutex::new((0, None));
+static CURRENT: Mutex<(u64, Option<Arc<RuntimeEffect>>, Backdrop)> =
+    Mutex::new((0, None, Backdrop::Scene));
 
 pub fn configure(config: &cosmic_config::Config) {
     use cosmic_config::ConfigGet;
@@ -28,17 +32,31 @@ pub fn configure(config: &cosmic_config::Config) {
         .filter(|effect| effect.valid() && effect.id == selected)
         .map(Arc::new);
     if let Some(effect) = &runtime {
-        blur_effect::set_glass_effect(match effect.base.as_str() { "glass" => 3, "aero" => 2, _ => 1 });
+        blur_effect::set_glass_effect(match effect.base.as_str() {
+            "glass" => 3,
+            "aero" => 2,
+            _ => 1,
+        });
     }
+    let backdrop = runtime.as_ref().map_or_else(
+        || config.get::<Backdrop>("forge_backdrop").unwrap_or_default(),
+        |effect| effect.backdrop,
+    );
     let mut current = CURRENT.lock().unwrap();
-    if current.1 != runtime {
+    if current.1 != runtime || current.2 != backdrop {
         current.0 = current.0.wrapping_add(1);
         current.1 = runtime;
+        current.2 = backdrop;
     }
 }
 
 pub fn current() -> (u64, Option<Arc<RuntimeEffect>>) {
-    CURRENT.lock().unwrap().clone()
+    let current = CURRENT.lock().unwrap();
+    (current.0, current.1.clone())
+}
+
+pub fn backdrop() -> Backdrop {
+    CURRENT.lock().unwrap().2
 }
 
 #[derive(Default)]
@@ -90,6 +108,8 @@ pub fn program<R: AsGlowRenderer>(
         UniformName::new("frame_index", UniformType::_1i),
         UniformName::new("window_position", UniformType::_2f),
         UniformName::new("window_velocity", UniformType::_2f),
+        UniformName::new("window_active", UniformType::_1f),
+        UniformName::new("is_dark", UniformType::_1f),
     ];
     uniforms.extend(
         effect

@@ -18,8 +18,8 @@ def prepare(source, version, local=None):
     release = json.loads((ROOT / 'release.json').read_text())
     pin = release['sources'][version]
     patches = [ROOT / 'patches/glass.patch', ROOT / 'patches/runtime.patch',
-               ROOT / 'patches/generic.patch', ROOT / 'patches/animation.patch']
-    files = patches + [ROOT / name for name in ['runtime.rs', 'loader.rs', 'animation.rs', 'glass.frag']]
+               ROOT / 'patches/generic.patch', ROOT / 'patches/animation.patch', ROOT / 'patches/backdrop.patch']
+    files = patches + [ROOT / name for name in ['runtime.rs', 'loader.rs', 'animation.rs', 'backdrop.rs', 'surface_state.rs', 'glass.frag']]
     binary_version = pin + '-forge-r' + str(release['renderer_revision'])
     expected = {'commit': pin, 'binary_version': binary_version, 'sha256': {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in files}}
     marker = source / '.forge-source.json'
@@ -41,7 +41,7 @@ def prepare(source, version, local=None):
         subprocess.run(['git', 'apply', '--check', str(patch)], cwd=source, check=True)
         subprocess.run(['git', 'apply', str(patch)], cwd=source, check=True)
     destination = source / 'src/backend/render/wayland'
-    for name in ['runtime', 'loader', 'animation']:
+    for name in ['runtime', 'loader', 'animation', 'backdrop', 'surface_state']:
         shutil.copy2(ROOT / (name + '.rs'), destination / ('forge_' + name + '.rs'))
     shutil.copy2(ROOT / 'glass.frag', destination.parent / 'shaders/forge_glass.frag')
     (source / 'build.rs').write_text(f'fn main() {{ println!("cargo:rustc-env=GIT_HASH={binary_version}"); }}\n')

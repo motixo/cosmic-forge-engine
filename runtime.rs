@@ -5,6 +5,20 @@ use serde::{Deserialize, Serialize};
 pub const ABI: u32 = 1;
 pub const MAX_SHADER: usize = 64 * 1024;
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Backdrop {
+    #[default]
+    Scene,
+    Wallpaper,
+}
+
+impl Backdrop {
+    pub fn is_scene(&self) -> bool {
+        *self == Self::Scene
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Parameter {
@@ -22,6 +36,8 @@ pub struct RuntimeEffect {
     pub source: String,
     #[serde(default, skip_serializing_if = "is_false")]
     pub animated: bool,
+    #[serde(default, skip_serializing_if = "Backdrop::is_scene")]
+    pub backdrop: Backdrop,
     pub parameters: Vec<Parameter>,
 }
 
@@ -60,6 +76,7 @@ impl RuntimeEffect {
             && self.parameters.len() <= 32
             && self.parameters.iter().enumerate().all(|(i, p)| {
                 identifier(&p.key)
+                    && !matches!(p.key.as_str(), "forge_runtime" | "forge_backdrop")
                     && identifier(&p.name)
                     && p.name.starts_with("forge_")
                     && p.value.is_finite()

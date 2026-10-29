@@ -59,7 +59,7 @@ def main():
                     '--target-dir', str(ROOT / 'build/portable-target' / args.cosmic_version),
                     '--jobs', str(args.jobs)], env=environment, check=True)
     subprocess.run(['cargo', 'test', '--release', '--locked', '--offline', '--lib',
-                    'forge_animation::tests', '-j', str(args.jobs)],
+                    'forge_', '-j', str(args.jobs)],
                    cwd=ROOT / 'build/portable-sources' / args.cosmic_version,
                    env=dict(environment, CARGO_TARGET_DIR=str(ROOT / 'build/portable-target' / args.cosmic_version),
                             CARGO_PROFILE_RELEASE_LTO='thin'), check=True)

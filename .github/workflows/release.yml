@@ -71,7 +71,7 @@ jobs:
             ~/.cargo/git
             build/portable-target
             build/portable-native
-          key: compositor-${{ matrix.runner }}-${{ runner.arch }}-${{ matrix.version }}-rust1.93-glibc2.35-${{ hashFiles('runtime.rs', 'loader.rs', 'animation.rs', 'patches/*', 'glass.frag', 'scripts/build_binary.py', 'build.py') }}
+          key: compositor-${{ matrix.runner }}-${{ runner.arch }}-${{ matrix.version }}-rust1.93-glibc2.35-${{ hashFiles('runtime.rs', 'loader.rs', 'animation.rs', 'backdrop.rs', 'surface_state.rs', 'patches/*', 'glass.frag', 'scripts/build_binary.py', 'build.py') }}
           restore-keys: compositor-${{ matrix.runner }}-${{ runner.arch }}-${{ matrix.version }}-rust1.93-glibc2.35-
       - name: Build portable compositor
         env:

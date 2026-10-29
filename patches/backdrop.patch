@@ -1,0 +1,436 @@
+diff --git a/src/backend/render/mod.rs b/src/backend/render/mod.rs
+index 9ad6158..5d557c3 100644
+--- a/src/backend/render/mod.rs
++++ b/src/backend/render/mod.rs
+@@ -742,6 +742,7 @@ where
+         return Ok(Vec::new());
+     }
+     let theme = shell_ref.theme().clone();
++    wayland::forge_backdrop::prepare(renderer, output).map_err(RenderError::Rendering)?;
+     let blur_strength = (theme.cosmic().frosted as u8 + 1) as usize;
+     let scale = output.current_scale().fractional_scale();
+     // we don't want to hold a shell lock across `cursor_elements`,
+diff --git a/src/backend/render/wayland/blur_effect.rs b/src/backend/render/wayland/blur_effect.rs
+index 35ca375..f4556f0 100644
+--- a/src/backend/render/wayland/blur_effect.rs
++++ b/src/backend/render/wayland/blur_effect.rs
+@@ -7,7 +7,7 @@ use std::{
+ };
+ 
+ use glam::{Affine2, Mat3, Vec2};
+-use super::{forge_animation, forge_loader};
++use super::{forge_animation, forge_loader, forge_backdrop, forge_surface_state, forge_runtime::Backdrop};
+ use smithay::{
+     backend::{
+         allocator::Fourcc,
+@@ -254,6 +254,9 @@ pub struct BlurState {
+     pub region: Vec<Rectangle<i32, Logical>>,
+     pub commit: CommitCounter,
+     runtime_revision: u64,
++    window_active: bool,
++    is_dark: bool,
++    wallpaper_revision: Option<u64>,
+     crystal: bool,
+     aero: bool,
+     aero_color: u8,
+@@ -281,6 +284,9 @@ impl Default for BlurState {
+             region: Vec::new(),
+             commit: CommitCounter::default(),
+             runtime_revision: 0,
++            window_active: true,
++            is_dark: true,
++            wallpaper_revision: None,
+             crystal: false,
+             aero: false,
+             aero_color: 55,
+@@ -309,13 +315,15 @@ pub struct BlurElement {
+     passes: usize,
+     uniforms: Vec<Uniform<'static>>,
+     crystal: bool,
+-    uneven_blur: bool,
++    wallpaper: Option<forge_backdrop::Image>,
++    sample_origin: Point<f64, Buffer>,
+ }
+ 
+ impl BlurElement {
+     pub fn from_state<R: ImportAll + AsGlowRenderer>(
+         renderer: &mut R,
+         state: &mut BlurState,
++        window_active: bool,
+         geometry: Rectangle<f64, Logical>,
+         output_scale: f64,
+         radii: [u8; 4],
+@@ -326,6 +334,7 @@ impl BlurElement {
+         Self::internal(
+             renderer,
+             state,
++            window_active,
+             geometry,
+             &region,
+             output_scale,
+@@ -337,6 +346,7 @@ impl BlurElement {
+     pub fn from_surface<R: ImportAll + AsGlowRenderer>(
+         renderer: &mut R,
+         states: &SurfaceData,
++        window_active: bool,
+         geometry: Rectangle<f64, Logical>,
+         output_scale: f64,
+         radii: [u8; 4],
+@@ -354,6 +364,7 @@ impl BlurElement {
+         Self::internal(
+             renderer,
+             &mut state.lock().unwrap(),
++            window_active,
+             geometry,
+             region,
+             output_scale,
+@@ -365,6 +376,7 @@ impl BlurElement {
+     pub fn internal<R: ImportAll + AsGlowRenderer>(
+         renderer: &mut R,
+         state: &mut BlurState,
++        window_active: bool,
+         geometry: Rectangle<f64, Logical>,
+         region: &Vec<Rectangle<i32, Logical>>,
+         output_scale: f64,
+@@ -372,6 +384,8 @@ impl BlurElement {
+         strength: usize,
+     ) -> Result<Option<Self>, R::Error> {
+         let (runtime_revision, runtime) = forge_loader::current();
++        let is_dark = forge_surface_state::dark();
++        let window_geometry = geometry;
+         let effect = runtime.as_ref().map_or_else(|| GLASS_EFFECT.load(Ordering::Relaxed),
+             |effect| match effect.base.as_str() { "glass" => 3, "aero" => 2, _ => 1 });
+         if (strength == 0 && effect == 0) || geometry.size.w == 0. || geometry.size.h == 0. {
+@@ -527,11 +541,30 @@ impl BlurElement {
+             }
+         }
+ 
++        let wallpaper = if forge_backdrop::selected() == Backdrop::Wallpaper {
++            forge_backdrop::current(renderer, params.offset, params.passes)?
++        } else { None };
++        if let Some(image) = &wallpaper {
++            let size = image.sharp.size();
++            let scale = Vec2::new(size.w as f32 / output_scale as f32 / window_geometry.size.w as f32,
++                                  size.h as f32 / output_scale as f32 / window_geometry.size.h as f32);
++            let translation = Vec2::new(-window_geometry.loc.x as f32 / window_geometry.size.w as f32,
++                                        -window_geometry.loc.y as f32 / window_geometry.size.h as f32);
++            let mapping = Mat3::from(Affine2::from_translation(translation) * Affine2::from_scale(scale));
++            uniforms.retain(|u| u.name != "input_to_geo" && u.name != "uv_per_pixel");
++            uniforms.push(Uniform::new("input_to_geo", UniformValue::Matrix3x3 {
++                matrices: vec![*AsRef::<[f32; 9]>::as_ref(&mapping)], transpose: false,
++            }));
++            uniforms.push(Uniform::new("uv_per_pixel", (output_scale as f32 / size.w as f32, output_scale as f32 / size.h as f32)));
++        }
++        let wallpaper_revision = wallpaper.as_ref().map(|image| image.revision);
+         let runtime_program = runtime.as_ref().and_then(|effect| forge_loader::program(renderer, effect));
+         if runtime_program.is_some() {
+             if let Some(runtime) = &runtime {
+                 uniforms.extend(runtime.parameters.iter().map(|p| Uniform::new(p.name.clone(), p.value)));
+                 uniforms.extend(forge_animation::uniforms(&state.id, runtime.animated, window_position));
++                uniforms.extend([Uniform::new("window_active", if window_active { 1.0_f32 } else { 0.0_f32 }),
++                                 Uniform::new("is_dark", if is_dark { 1.0_f32 } else { 0.0_f32 })]);
+             }
+         }
+ 
+@@ -541,6 +574,9 @@ impl BlurElement {
+             .as_ref()
+             .is_some_and(|id| id == &renderer_id)
+             && state.runtime_revision == runtime_revision
++            && state.window_active == window_active
++            && state.is_dark == is_dark
++            && state.wallpaper_revision == wallpaper_revision
+             && state.offset == params.offset
+             && state.passes == params.passes
+             && state.crystal == crystal
+@@ -567,6 +603,9 @@ impl BlurElement {
+ 
+         state.renderer_id = Some(renderer_id);
+         state.runtime_revision = runtime_revision;
++        state.window_active = window_active;
++        state.is_dark = is_dark;
++        state.wallpaper_revision = wallpaper_revision;
+         state.offset = params.offset;
+         state.passes = params.passes;
+         state.crystal = crystal;
+@@ -616,7 +655,8 @@ impl BlurElement {
+                 .collect(),
+             uniforms,
+             crystal: custom_glass,
+-            uneven_blur: blur_amount > 0 && (generic || (custom_glass && blur_amount < 100)),
++            wallpaper,
++            sample_origin: (geometry.loc.x * output_scale, geometry.loc.y * output_scale).into(),
+         }))
+     }
+ }
+@@ -671,7 +711,7 @@ impl Element for BlurElement {
+     }
+ 
+     fn is_framebuffer_effect(&self) -> bool {
+-        true
++        self.wallpaper.is_none()
+     }
+ }
+ 
+@@ -686,6 +726,7 @@ where
+         dst: Rectangle<i32, Physical>,
+         cache: &UserDataMap,
+     ) -> Result<(), <R>::Error> {
++        if self.wallpaper.is_some() { return Ok(()); }
+         let transform = frame.transformation();
+         let tex_size = self.src.to_i32_round();
+         let glow_frame = <R as AsGlowRenderer>::glow_frame_mut(frame);
+@@ -727,7 +768,7 @@ where
+             .map_err(R::from_gles_error)?;
+         gles_frame.wait(&sync).map_err(R::from_gles_error)?;
+ 
+-        if self.uneven_blur {
++        if self.crystal && self.passes > 0 {
+             let sharp_cache =
+                 cache.get_or_insert_threadsafe(CrystalSharpTexture::<R::TextureId>::default);
+             let mut sharp_entry = sharp_cache.0.lock().unwrap();
+@@ -793,23 +834,31 @@ where
+             })
+             .flat_map(|rect| damage.iter().flat_map(move |r| r.intersection(rect)))
+             .collect::<Vec<_>>();
+-        let cache = cache.expect("Framebuffer element without cache?");
+-        let Some(texture) = cache.get::<BlurTexture<R::TextureId>>() else {
++        let texture_ref = cache.and_then(|cache| cache.get::<BlurTexture<R::TextureId>>())
++            .map(|texture| texture.lock().unwrap());
++        if self.wallpaper.is_none() && texture_ref.is_none() {
+             return Err(R::from_gles_error(GlesError::BlitError));
+-        };
+-        let texture_ref = texture.lock().unwrap();
++        }
+ 
+-        if let Some(tex) = texture_ref.as_ref() {
+-            let sharp_cache = cache.get::<CrystalSharpTexture<R::TextureId>>();
++        let mut src = src;
++        let wallpaper_texture = if let Some(image) = &self.wallpaper {
++            let gles = BorrowMut::<GlesFrame>::borrow_mut(<R as AsGlowRenderer>::glow_frame_mut(frame));
++            let context = gles.renderer().as_ref().context_id();
++            src.loc += self.sample_origin;
++            Some(R::tex_from_gl(&context, image.blurred.clone()))
++        } else { None };
++        if let Some(tex) = wallpaper_texture.as_ref().or_else(|| texture_ref.as_ref().and_then(|texture| texture.as_ref())) {
++            let sharp_cache = cache.and_then(|cache| cache.get::<CrystalSharpTexture<R::TextureId>>());
+             let sharp_entry = sharp_cache.map(|cache| cache.0.lock().unwrap());
+             let sharp = if self.crystal {
+                 let gles = BorrowMut::<GlesFrame>::borrow_mut(
+                     <R as AsGlowRenderer>::glow_frame_mut(frame),
+                 );
+                 let context = gles.renderer().as_ref().context_id();
+-                let texture = sharp_entry
++                let wallpaper_sharp = self.wallpaper.as_ref().map(|image| R::tex_from_gl(&context, image.sharp.clone()));
++                let texture = wallpaper_sharp.as_ref().or_else(|| sharp_entry
+                     .as_ref()
+-                    .and_then(|entry| entry.as_ref())
++                    .and_then(|entry| entry.as_ref()))
+                     .unwrap_or(tex);
+                 Some(
+                     R::tex_to_gl(&context, texture)
+@@ -972,7 +1021,7 @@ fn blit_from_active_fb(
+     }
+ }
+ 
+-fn render_blur(
++pub(crate) fn render_blur(
+     renderer: &mut GlesRenderer,
+     shaders: &BlurShaders,
+     textures: &mut [&mut GlesTexture; 2],
+diff --git a/src/backend/render/wayland/mod.rs b/src/backend/render/wayland/mod.rs
+index a82450d..40bca8c 100644
+--- a/src/backend/render/wayland/mod.rs
++++ b/src/backend/render/wayland/mod.rs
+@@ -18,6 +18,8 @@ use crate::backend::render::{
+ 
+ pub mod blur_effect;
+ pub(crate) mod forge_animation;
++pub(crate) mod forge_backdrop;
++pub(crate) mod forge_surface_state;
+ pub(crate) mod forge_loader;
+ mod forge_runtime;
+ pub mod clipped_surface;
+@@ -53,6 +55,8 @@ pub fn push_render_elements_from_surface_tree<R>(
+     let scale = scale.into();
+     let kind = kind.into();
+     let mut passed_main = false;
++    // Traversal callbacks hold surface locks, so resolve ownership before entering the tree.
++    let window_active = forge_surface_state::active(main_surface);
+ 
+     compositor::with_surface_tree_downward(
+         main_surface,
+@@ -96,6 +100,7 @@ pub fn push_render_elements_from_surface_tree<R>(
+                             blur = BlurElement::from_surface(
+                                 renderer,
+                                 states,
++                                window_active,
+                                 blur_geo,
+                                 scale.x,
+                                 radii,
+diff --git a/src/config/mod.rs b/src/config/mod.rs
+index 9906cc6..49f5cbd 100644
+--- a/src/config/mod.rs
++++ b/src/config/mod.rs
+@@ -863,6 +863,7 @@ fn config_changed(config: cosmic_config::Config, keys: Vec<String>, state: &mut
+     for key in &keys {
+         match key.as_str() {
+             "forge_runtime"
++            | "forge_backdrop"
+             | "glass_effect"
+             | "aero_blur_amount"
+             | "aero_color"
+diff --git a/src/shell/element/stack.rs b/src/shell/element/stack.rs
+index f4a37bf..a188e9b 100644
+--- a/src/shell/element/stack.rs
++++ b/src/shell/element/stack.rs
+@@ -1079,6 +1079,7 @@ impl TabMessage for Message {
+ }
+ 
+ impl Program for CosmicStackInternal {
++    fn window_active(&self) -> bool { self.activated.load(Ordering::SeqCst) }
+     type Message = Message;
+ 
+     fn update(
+diff --git a/src/shell/element/surface.rs b/src/shell/element/surface.rs
+index a7fd922..c8d50b0 100644
+--- a/src/shell/element/surface.rs
++++ b/src/shell/element/surface.rs
+@@ -334,6 +334,9 @@ impl CosmicSurface {
+     }
+ 
+     pub fn set_activated(&self, activated: bool) {
++        if let Some(surface) = self.wl_surface() {
++            crate::backend::render::wayland::forge_surface_state::set_active(&surface, activated);
++        }
+         match self.0.underlying_surface() {
+             WindowSurface::Wayland(toplevel) => toplevel.with_pending_state(|state| {
+                 if activated {
+@@ -1028,7 +1031,7 @@ impl SpaceElement for CosmicSurface {
+     }
+ 
+     fn set_activate(&self, activated: bool) {
+-        SpaceElement::set_activate(&self.0, activated)
++        self.set_activated(activated);
+     }
+ 
+     fn output_enter(
+diff --git a/src/shell/element/window.rs b/src/shell/element/window.rs
+index fa4a187..a574fee 100644
+--- a/src/shell/element/window.rs
++++ b/src/shell/element/window.rs
+@@ -730,6 +730,9 @@ pub enum Message {
+ }
+ 
+ impl Program for CosmicWindowInternal {
++    fn window_active(&self) -> bool {
++        self.window.wl_surface().is_none_or(|s| crate::backend::render::wayland::forge_surface_state::active(&s))
++    }
+     type Message = Message;
+ 
+     fn update(
+diff --git a/src/shell/focus/mod.rs b/src/shell/focus/mod.rs
+index 8b2348e..25a2194 100644
+--- a/src/shell/focus/mod.rs
++++ b/src/shell/focus/mod.rs
+@@ -217,6 +217,7 @@ impl Shell {
+         update_focus_state(seat, target, state, serial, update_cursor);
+ 
+         state.common.shell.write().update_active();
++        redraw_forge_focus(state);
+     }
+ 
+     // We suppress Element(X) to Fullscreen(X) transition to avoid
+@@ -369,6 +370,26 @@ impl Shell {
+                 }
+             }
+         }
++        let windows = self.mapped().flat_map(|mapped| mapped.windows())
++            .filter_map(|(surface, _)| surface.x11_surface().cloned())
++            .chain(self.workspaces.iter().flat_map(|(_, set)| set.workspaces.iter())
++                .flat_map(|workspace| workspace.get_fullscreen_surfaces())
++                .filter_map(|fullscreen| fullscreen.surface.x11_surface().cloned()))
++            .chain(self.override_redirect_windows.iter().cloned()).collect::<Vec<_>>();
++        let surfaces = windows.iter().filter_map(|window|
++            Some(((window.xwm_id()?, window.window_id()), window.wl_surface()?)))
++            .collect::<std::collections::HashMap<_, _>>();
++        for window in &windows {
++            if let Some(surface) = window.wl_surface() {
++                let parent = window.is_transient_for().and_then(|id|
++                    window.xwm_id().and_then(|xwm| surfaces.get(&(xwm, id))));
++                crate::backend::render::wayland::forge_surface_state::set_parent(&surface, parent);
++                if !window.is_override_redirect() || parent.is_some() {
++                    crate::backend::render::wayland::forge_surface_state::set_active(&surface, window.is_activated());
++                }
++            }
++        }
++
+     }
+ }
+ 
+@@ -632,7 +653,8 @@ impl Common {
+             }
+         }
+ 
+-        state.common.shell.write().update_active()
++        state.common.shell.write().update_active();
++        redraw_forge_focus(state);
+     }
+ }
+ 
+@@ -830,3 +852,11 @@ fn exclusive_layer_surface_layer(shell: &Shell) -> Option<Layer> {
+     }
+     layer
+ }
++
++fn redraw_forge_focus(state: &mut State) {
++    if crate::backend::render::wayland::forge_surface_state::take_focus_change() {
++        for output in state.common.shell.read().outputs() {
++            state.backend.schedule_render(output);
++        }
++    }
++}
+diff --git a/src/theme.rs b/src/theme.rs
+index 4180cb4..e45b689 100644
+--- a/src/theme.rs
++++ b/src/theme.rs
+@@ -4,6 +4,7 @@
+ 
+ use calloop::LoopHandle;
+ use cosmic::cosmic_theme::{Theme, ThemeMode, palette};
++use cosmic_config::ConfigGet;
+ 
+ use crate::state::State;
+ 
+@@ -21,6 +22,8 @@ pub(crate) fn active_window_hint(theme: &Theme) -> palette::Srgba {
+ }
+ 
+ fn update_crystal_tint(theme: &cosmic::Theme) {
++    let dark = ThemeMode::config().and_then(|config| config.get::<bool>("is_dark")).unwrap_or(true);
++    crate::backend::render::wayland::forge_surface_state::set_dark(dark);
+     let base = theme.cosmic().background(false).base;
+     let accent = theme.cosmic().accent_color();
+     crate::backend::render::wayland::blur_effect::set_aero_theme_accent([
+diff --git a/src/utils/iced/mod.rs b/src/utils/iced/mod.rs
+index 8baf87f..83f71ac 100644
+--- a/src/utils/iced/mod.rs
++++ b/src/utils/iced/mod.rs
+@@ -136,6 +136,7 @@ pub trait IcedProgram {
+ }
+ 
+ pub trait Program {
++    fn window_active(&self) -> bool { true }
+     type Message: std::fmt::Debug + Send;
+     fn update(
+         &mut self,
+@@ -1224,9 +1225,11 @@ impl<P: Program + Send + 'static> IcedElement<P> {
+                     *radius = ((*radius as f64) * internal_ref.additional_scale).round() as u8;
+                 }
+ 
++                let window_active = internal_ref.state.program().program.window_active();
+                 match BlurElement::from_state(
+                     renderer,
+                     &mut internal_ref.blur,
++                    window_active,
+                     Rectangle::new(
+                         location
+                             .to_f64()
