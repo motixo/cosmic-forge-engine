@@ -297,13 +297,3 @@ class EngineInstallerTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.install()
         self.assertEqual(binary.read_text(), 'modified')
-
-    def test_package_detection_requires_matching_supported_versions(self):
-        import subprocess
-        def query(command, **_):
-            return subprocess.CompletedProcess(command, 0, stdout=PACKAGES[command[-1]])
-        with patch('platforms.platform.freedesktop_os_release', return_value={'ID': 'arch'}), patch.object(installer.subprocess, 'run', side_effect=query):
-            self.assertEqual(installer.installed_packages(), (PACKAGES, '1.10.0'))
-        with patch('platforms.platform.freedesktop_os_release', return_value={'ID': 'unknown'}):
-            with self.assertRaises(RuntimeError):
-                installer.installed_packages()

@@ -62,7 +62,7 @@ def install(binary, packages, version, prefix=None):
     progress('installing')
     previous = record['previous'] if record else {
         'data': base64.b64encode(current).decode() if current is not None else None,
-        'mode': launcher.stat().st_mode & 0o777 if current is not None else 0o755,
+        'mode': current_mode,
     }
     fallback = state / 'cosmic-forge/engine-previous-compositor'
     if previous['data'] is not None:

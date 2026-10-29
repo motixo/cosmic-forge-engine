@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run Crystal in an isolated nested COSMIC compositor. No host preferences change."""
+"""Preview glass effects in an isolated nested COSMIC compositor."""
 import argparse
 import json
 import math
@@ -19,8 +19,6 @@ parser.add_argument('--effect', choices=['crystal', 'aero', 'frosted'], default=
                     help='Glass effect to preview (default: crystal)')
 parser.add_argument('--headless', action='store_true', help='Use a private Xvfb display')
 parser.add_argument('--backend', choices=['auto', 'wayland', 'x11'], default='auto')
-parser.add_argument('--settings', action='store_true', help='Open Crystal appearance controls')
-parser.add_argument('--settings-binary', type=Path, default=ROOT / 'build/bin/cosmic-settings')
 parser.add_argument('--run-dir', type=Path, default=ROOT / 'build/preview')
 parser.add_argument('--compositor', type=Path, default=ROOT / 'build/bin/cosmic-comp')
 args = parser.parse_args()
@@ -150,11 +148,9 @@ try:
             time.sleep(0.2)
     surface = spawn('surface', [str(ROOT / 'build/bin/test-surface')]
                     + (['--aero'] if args.effect == 'aero' else []), client)
-    if args.settings:
-        spawn('settings', [str(args.settings_binary), 'appearance'], client)
     (run / 'state.json').write_text(json.dumps({'env': client, 'display': env.get('DISPLAY'),
         'backend': 'wayland' if nested_wayland else 'x11', 'surface_pid': surface.pid}, indent=2))
-    print('Isolated COSMIC Crystal ready: ' + str(run), flush=True)
+    print('Isolated COSMIC Forge ready: ' + str(run), flush=True)
     start = time.monotonic()
     while compositor.poll() is None and time.monotonic() - start < 1200 and not (run / 'stop').exists():
         time.sleep(0.25)

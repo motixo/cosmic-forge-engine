@@ -9,11 +9,9 @@ import shutil
 import subprocess
 import tempfile
 
+from recovery import progress
+
 ROOT = Path(__file__).resolve().parent
-
-
-def progress(stage):
-    print('FORGE_PROGRESS:' + stage, flush=True)
 
 
 def prepare(source, version, local=None):

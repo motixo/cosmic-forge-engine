@@ -9,7 +9,7 @@ import re
 import subprocess
 import tempfile
 
-from recovery import digest, progress, xdg
+from recovery import atomic, digest, progress, xdg
 
 REPOSITORY = 'motixo/cosmic-forge-engine'
 MAX_BINARY = 128 * 1024 * 1024
@@ -93,16 +93,7 @@ def from_release(release, version, machine, cache, fetch=download):
         if binary.read_bytes() != payload or not os.access(binary, os.X_OK):
             raise RuntimeError('Preserved a modified cached compositor')
         return binary
-    with tempfile.NamedTemporaryFile(dir=directory, delete=False) as temporary:
-        pending = Path(temporary.name)
-        temporary.write(payload)
-        temporary.flush()
-        os.fsync(temporary.fileno())
-    try:
-        pending.chmod(0o755)
-        os.replace(pending, binary)
-    finally:
-        pending.unlink(missing_ok=True)
+    atomic(binary, payload, 0o755)
     return binary
 
 
