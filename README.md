@@ -30,4 +30,7 @@ python3 build.py --cosmic-version 1.10.0
 Requires Python 3.11+, Rust, Git and COSMIC compositor development libraries.
 Upstream commits and the shader ABI are pinned in `release.json`.
 
+Renderer revision 3 supports opt-in animated shaders with time, frame, window
+position and velocity inputs.
+
 GPL-3.0-only. Dependency notices are included in the repository.

@@ -17,8 +17,9 @@ ROOT = Path(__file__).resolve().parent
 def prepare(source, version, local=None):
     release = json.loads((ROOT / 'release.json').read_text())
     pin = release['sources'][version]
-    files = [ROOT / 'patches/glass.patch', ROOT / 'patches/runtime.patch',
-             ROOT / 'patches/generic.patch', ROOT / 'runtime.rs', ROOT / 'loader.rs', ROOT / 'glass.frag']
+    patches = [ROOT / 'patches/glass.patch', ROOT / 'patches/runtime.patch',
+               ROOT / 'patches/generic.patch', ROOT / 'patches/animation.patch']
+    files = patches + [ROOT / name for name in ['runtime.rs', 'loader.rs', 'animation.rs', 'glass.frag']]
     binary_version = pin + '-forge-r' + str(release['renderer_revision'])
     expected = {'commit': pin, 'binary_version': binary_version, 'sha256': {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in files}}
     marker = source / '.forge-source.json'
@@ -36,12 +37,12 @@ def prepare(source, version, local=None):
         subprocess.run(['git', 'init', '-q', str(source)], check=True)
         subprocess.run(['git', 'fetch', '--depth', '1', release['upstream'], pin], cwd=source, check=True)
         subprocess.run(['git', 'checkout', '--detach', 'FETCH_HEAD'], cwd=source, check=True)
-    for patch in files[:3]:
+    for patch in patches:
         subprocess.run(['git', 'apply', '--check', str(patch)], cwd=source, check=True)
         subprocess.run(['git', 'apply', str(patch)], cwd=source, check=True)
     destination = source / 'src/backend/render/wayland'
-    shutil.copy2(ROOT / 'runtime.rs', destination / 'forge_runtime.rs')
-    shutil.copy2(ROOT / 'loader.rs', destination / 'forge_loader.rs')
+    for name in ['runtime', 'loader', 'animation']:
+        shutil.copy2(ROOT / (name + '.rs'), destination / ('forge_' + name + '.rs'))
     shutil.copy2(ROOT / 'glass.frag', destination.parent / 'shaders/forge_glass.frag')
     (source / 'build.rs').write_text(f'fn main() {{ println!("cargo:rustc-env=GIT_HASH={binary_version}"); }}\n')
     marker.write_text(json.dumps(expected, indent=2) + '\n')

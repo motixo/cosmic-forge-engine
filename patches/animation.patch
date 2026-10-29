@@ -1,0 +1,177 @@
+diff --git a/src/backend/kms/surface/mod.rs b/src/backend/kms/surface/mod.rs
+index cbc8938..6c27d2c 100644
+--- a/src/backend/kms/surface/mod.rs
++++ b/src/backend/kms/surface/mod.rs
+@@ -6,6 +6,7 @@ use crate::{
+         PostprocessShader, PostprocessState,
+         element::{CosmicElement, DamageElement},
+         init_shaders, output_elements,
++        wayland::forge_animation,
+     },
+     config::ScreenFilter,
+     shell::Shell,
+@@ -880,7 +881,7 @@ impl SurfaceThreadState {
+             QueueState::WaitingForEstimatedVBlankAndQueued { .. } => unreachable!(),
+         };
+ 
+-        if redraw_needed || self.shell.read().animations_going() {
++        if redraw_needed || self.shell.read().animations_going() || forge_animation::active(&self.output) {
+             let vblank_frame = tracy_client::Client::running()
+                 .unwrap()
+                 .non_continuous_frame(self.vblank_frame_name);
+@@ -907,7 +908,7 @@ impl SurfaceThreadState {
+ 
+         self.frame_callback_seq = self.frame_callback_seq.wrapping_add(1);
+ 
+-        if force || self.shell.read().animations_going() {
++        if force || self.shell.read().animations_going() || forge_animation::active(&self.output) {
+             self.queue_redraw(false);
+         }
+         self.send_frame_callbacks();
+@@ -1018,6 +1019,7 @@ impl SurfaceThreadState {
+                 .map_err(|err| anyhow::format_err!("Failed to create renderer: {:?}", err))?
+         };
+ 
++        forge_animation::begin_frame(&self.output);
+         self.timings.start_render(&self.clock);
+ 
+         let mut additional_frame_flags = FrameFlags::empty();
+@@ -1025,7 +1027,7 @@ impl SurfaceThreadState {
+ 
+         let (has_active_fullscreen, fullscreen_drives_refresh_rate, animations_going) = {
+             let shell = self.shell.read();
+-            let animations_going = shell.animations_going();
++            let animations_going = shell.animations_going() || forge_animation::active(&self.output);
+             let output = self.mirroring.as_ref().unwrap_or(&self.output);
+             if let Some((_, workspace)) = shell.workspaces.active(output) {
+                 let seat = shell.seats.last_active();
+@@ -1245,6 +1247,7 @@ impl SurfaceThreadState {
+                         Err(RenderError::OutputNoMode(_)) => unreachable!(),
+                     };
+ 
++                    forge_animation::observe(&res.states);
+                     if self.mirroring.is_none() {
+                         if let Some(states) = pre_postprocess_data.states.as_mut() {
+                             states.states.extend(res.states.states);
+@@ -1312,6 +1315,7 @@ impl SurfaceThreadState {
+ 
+         match res {
+             Ok(frame_result) => {
++                forge_animation::finish_frame(&self.output, &frame_result.states);
+                 let (tx, rx) = std::sync::mpsc::channel();
+ 
+                 let feedback = if !frame_result.is_empty && self.mirroring.is_none() {
+diff --git a/src/backend/render/wayland/blur_effect.rs b/src/backend/render/wayland/blur_effect.rs
+index 3e4a0fe..35ca375 100644
+--- a/src/backend/render/wayland/blur_effect.rs
++++ b/src/backend/render/wayland/blur_effect.rs
+@@ -7,7 +7,7 @@ use std::{
+ };
+ 
+ use glam::{Affine2, Mat3, Vec2};
+-use super::forge_loader;
++use super::{forge_animation, forge_loader};
+ use smithay::{
+     backend::{
+         allocator::Fourcc,
+@@ -378,6 +378,7 @@ impl BlurElement {
+             return Ok(None);
+         }
+ 
++        let window_position = [geometry.loc.x as f32, geometry.loc.y as f32];
+         let geo = geometry.to_physical_precise_round(output_scale);
+         let mut extended_geo = geo;
+         let crystal = effect == 1;
+@@ -530,10 +531,12 @@ impl BlurElement {
+         if runtime_program.is_some() {
+             if let Some(runtime) = &runtime {
+                 uniforms.extend(runtime.parameters.iter().map(|p| Uniform::new(p.name.clone(), p.value)));
++                uniforms.extend(forge_animation::uniforms(&state.id, runtime.animated, window_position));
+             }
+         }
+ 
+-        let dirty = !(state
++        let animated = runtime_program.is_some() && runtime.as_ref().is_some_and(|effect| effect.animated);
++        let dirty = animated || !(state
+             .renderer_id
+             .as_ref()
+             .is_some_and(|id| id == &renderer_id)
+diff --git a/src/backend/render/wayland/mod.rs b/src/backend/render/wayland/mod.rs
+index 3fd1e18..a82450d 100644
+--- a/src/backend/render/wayland/mod.rs
++++ b/src/backend/render/wayland/mod.rs
+@@ -17,6 +17,7 @@ use crate::backend::render::{
+ };
+ 
+ pub mod blur_effect;
++pub(crate) mod forge_animation;
+ pub(crate) mod forge_loader;
+ mod forge_runtime;
+ pub mod clipped_surface;
+diff --git a/src/backend/winit.rs b/src/backend/winit.rs
+index 8f3d14c..3364b86 100644
+--- a/src/backend/winit.rs
++++ b/src/backend/winit.rs
+@@ -1,7 +1,7 @@
+ // SPDX-License-Identifier: GPL-3.0-only
+ 
+ use crate::{
+-    backend::render,
++    backend::render::{self, wayland::forge_animation},
+     config::ScreenFilter,
+     shell::{Devices, SeatExt},
+     state::{BackendData, Common},
+@@ -54,6 +54,7 @@ impl WinitState {
+             .backend
+             .bind()
+             .with_context(|| "Failed to bind buffer")?;
++        forge_animation::begin_frame(&self.output);
+         match render::render_output(
+             None,
+             renderer,
+@@ -68,6 +69,7 @@ impl WinitState {
+             &state.event_loop_handle,
+         ) {
+             Ok(RenderOutputResult { damage, states, .. }) => {
++                forge_animation::finish_frame(&self.output, &states);
+                 std::mem::drop(fb);
+                 self.backend
+                     .submit(damage.map(|x| x.as_slice()))
+diff --git a/src/backend/x11.rs b/src/backend/x11.rs
+index ed92e84..dc25e91 100644
+--- a/src/backend/x11.rs
++++ b/src/backend/x11.rs
+@@ -1,7 +1,7 @@
+ // SPDX-License-Identifier: GPL-3.0-only
+ 
+ use crate::{
+-    backend::render,
++    backend::render::{self, wayland::forge_animation},
+     config::ScreenFilter,
+     shell::{Devices, SeatExt},
+     state::{BackendData, Common},
+@@ -222,6 +222,7 @@ impl Surface {
+         let mut fb = renderer
+             .bind(&mut buffer)
+             .with_context(|| "Failed to bind dmabuf")?;
++        forge_animation::begin_frame(&self.output);
+         match render::render_output(
+             None,
+             renderer,
+@@ -236,6 +237,7 @@ impl Surface {
+             &state.event_loop_handle,
+         ) {
+             Ok(RenderOutputResult { damage, states, .. }) => {
++                forge_animation::finish_frame(&self.output, &states);
+                 self.surface
+                     .submit()
+                     .with_context(|| "Failed to submit buffer for display")?;
+@@ -463,7 +465,7 @@ pub fn init_backend(
+                     .iter_mut()
+                     .find(|s| s.window.id() == window_id)
+                 {
+-                    if surface.dirty {
++                    if surface.dirty || forge_animation::active(&surface.output) {
+                         surface.render.ping();
+                     } else {
+                         surface.pending = false;

@@ -85,6 +85,11 @@ pub fn program<R: AsGlowRenderer>(
         UniformName::new("everyday_mode", UniformType::_1f),
         UniformName::new("aero_color", UniformType::_1f),
         UniformName::new("aero_reflections", UniformType::_1f),
+        UniformName::new("time", UniformType::_1f),
+        UniformName::new("delta_time", UniformType::_1f),
+        UniformName::new("frame_index", UniformType::_1i),
+        UniformName::new("window_position", UniformType::_2f),
+        UniformName::new("window_velocity", UniformType::_2f),
     ];
     uniforms.extend(
         effect

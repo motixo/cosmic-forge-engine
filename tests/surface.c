@@ -64,10 +64,12 @@ static void label(cairo_t *cr, double x, double y, double size, const char *text
 
 int main(int argc, char **argv) {
     int aero = argc > 1 && !strcmp(argv[1], "--aero");
-    int opaque = argc > 1 && !strcmp(argv[1], "--opaque");
+    int cover = argc > 1 && !strcmp(argv[1], "--cover");
+    int opaque = cover || (argc > 1 && !strcmp(argv[1], "--opaque"));
     int no_effect = argc > 1 && !strcmp(argv[1], "--no-effect");
     int reading_light = argc > 1 && !strcmp(argv[1], "--readability-light");
     int reading = reading_light || (argc > 1 && !strcmp(argv[1], "--readability-dark"));
+    if (cover) { width = 1280; height = 900; }
     display = wl_display_connect(NULL);
     if (!display) return 1;
     struct wl_registry *registry = wl_display_get_registry(display);
@@ -120,6 +122,7 @@ int main(int argc, char **argv) {
     xdg_toplevel_set_min_size(top, width, height);
     xdg_toplevel_set_max_size(top, width, height);
     xdg_toplevel_add_listener(top, &toplevel_listener, NULL);
+    if (cover) xdg_toplevel_set_fullscreen(top, NULL);
     if (!no_effect) {
         struct ext_background_effect_surface_v1 *fx = ext_background_effect_manager_v1_get_background_effect(effects, surface);
         struct wl_region *region = wl_compositor_create_region(compositor);

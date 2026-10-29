@@ -20,7 +20,13 @@ pub struct RuntimeEffect {
     pub id: String,
     pub base: String,
     pub source: String,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub animated: bool,
     pub parameters: Vec<Parameter>,
+}
+
+pub fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 pub fn identifier(value: &str) -> bool {
