@@ -107,7 +107,6 @@ def install(binary, packages, version, prefix=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--component', choices=['compositor', 'panel', 'greeter'], default='compositor')
     action = parser.add_mutually_exclusive_group()
     action.add_argument('--restore', action='store_true')
     action.add_argument('--build', action='store_true', help='Build from pinned source instead of downloading a binary')
@@ -117,14 +116,6 @@ def main():
     args = parser.parse_args()
     if args.prefix:
         args.prefix = args.prefix.resolve()
-    if args.component == 'panel':
-        from panel.install import run
-        run(args)
-        return
-    if args.component == 'greeter':
-        from greeter.install import run
-        run(args)
-        return
     progress('checking')
     _, state, _ = paths(args.prefix)
     state.mkdir(parents=True, exist_ok=True)

@@ -7,10 +7,6 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
-      component:
-        type: choice
-        options: [panel, compositor, greeter, all]
-        default: panel
       publish:
         type: boolean
         default: false
@@ -33,16 +29,12 @@ jobs:
           python-version: '3.11'
       - run: python -m unittest discover -s tests -p 'test_*.py' -v
       - run: python scripts/package_engine.py
-      - run: cat LICENSE LICENSE.libdisplay-info panel/NOTICE greeter/NOTICE > build/release/LICENSES.txt
+      - run: cat LICENSE LICENSE.libdisplay-info > build/release/LICENSES.txt
       - id: versions
-        env:
-          COMPONENT: ${{ inputs.component || 'all' }}
         run: |
           python - <<'PYTHON' >> "$GITHUB_OUTPUT"
-          import json, os
-          selected = os.environ['COMPONENT']
-          components = ['compositor', 'panel', 'greeter'] if selected == 'all' else [selected]
-          matrix = [{'component': c, 'version': v, 'runner': r} for c in components for v in json.load(open('release.json'))['sources'] for r in (['ubuntu-24.04', 'ubuntu-24.04-arm'] if c == 'greeter' else ['ubuntu-22.04', 'ubuntu-22.04-arm'])]
+          import json
+          matrix = [{'version': v, 'runner': r} for v in json.load(open('release.json'))['sources'] for r in ['ubuntu-22.04', 'ubuntu-22.04-arm']]
           print('value=' + json.dumps({'include': matrix}))
           PYTHON
       - uses: actions/upload-artifact@v4
@@ -79,21 +71,15 @@ jobs:
             ~/.cargo/git
             build/portable-target
             build/portable-native
-          key: ${{ matrix.component }}-${{ matrix.runner }}-${{ runner.arch }}-${{ matrix.version }}-rust1.93-glibc2.35-${{ hashFiles('runtime.rs', 'loader.rs', 'patches/*', 'glass.frag', 'scripts/build_binary.py', 'build.py', 'panel/*', 'greeter/*') }}
-          restore-keys: ${{ matrix.component }}-${{ matrix.runner }}-${{ runner.arch }}-${{ matrix.version }}-rust1.93-glibc2.35-
-      - name: Build portable component
+          key: compositor-${{ matrix.runner }}-${{ runner.arch }}-${{ matrix.version }}-rust1.93-glibc2.35-${{ hashFiles('runtime.rs', 'loader.rs', 'patches/*', 'glass.frag', 'scripts/build_binary.py', 'build.py') }}
+          restore-keys: compositor-${{ matrix.runner }}-${{ runner.arch }}-${{ matrix.version }}-rust1.93-glibc2.35-
+      - name: Build portable compositor
         env:
           COSMIC_VERSION: ${{ matrix.version }}
-          COMPONENT: ${{ matrix.component }}
-        run: python scripts/build_binary.py --component "$COMPONENT" --cosmic-version "$COSMIC_VERSION"
-      - name: Check the sandbox artwork decoder
-        if: matrix.component == 'greeter'
-        env:
-          FORGE_MEDIA_BINARY: build/bin/cosmic-greeter
-        run: python -m unittest discover -s tests -p 'test_media.py' -v
+        run: python scripts/build_binary.py --cosmic-version "$COSMIC_VERSION"
       - uses: actions/upload-artifact@v4
         with:
-          name: binary-${{ matrix.component }}-${{ matrix.version }}-${{ runner.arch }}
+          name: binary-compositor-${{ matrix.version }}-${{ runner.arch }}
           path: build/release/*.xz
 
   release:
@@ -117,9 +103,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ inputs.release_tag || github.ref_name }}
+          NOTES: 'Shader compositor engine for COSMIC Forge. Prebuilt binaries for COSMIC 1.10 and 1.11 on x86_64 and ARM64; glibc 2.35+. Supports Arch, Fedora, Ubuntu and Pop!_OS. Restore selects the original system compositor and preserves preferences.'
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" release/* --clobber
+            gh release edit "$TAG" --notes "$NOTES"
           else
-            gh release create "$TAG" release/* --verify-tag --latest --title "$TAG" --notes 'Independent Forge compositor, panel and lock screen components. Prebuilt binaries for COSMIC 1.10 and 1.11 on x86_64 and ARM64; glibc 2.35+ for compositor/panel and 2.39+ for lock screen. Supports Arch, Fedora, Ubuntu and Pop!_OS. Restore selects original system components and preserves preferences.'
+            gh release create "$TAG" release/* --verify-tag --latest --title "$TAG" --notes "$NOTES"
           fi

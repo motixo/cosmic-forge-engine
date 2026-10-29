@@ -52,10 +52,10 @@ def compositor_version(package):
     return upstream_version(package, json.loads((ROOT / 'release.json').read_text())['sources'], 'cosmic-comp')
 
 
-def installed_packages(names=PACKAGES, sources=None, program='cosmic-comp'):
+def installed_packages():
     manager = package_manager()
     packages = {}
-    for name in names:
+    for name in PACKAGES:
         result = subprocess.run(package_query(manager, name), check=True, capture_output=True, text=True)
         package = result.stdout.strip()
         fields = package.split()
@@ -63,5 +63,4 @@ def installed_packages(names=PACKAGES, sources=None, program='cosmic-comp'):
            (manager == 'dpkg-query' and (len(fields) != 3 or fields[2] != 'installed')):
             raise RuntimeError('Install the COSMIC desktop packages first: ' + name)
         packages[name] = package
-    version = compositor_version(packages[program]) if sources is None else upstream_version(packages[program], sources, program)
-    return packages, version
+    return packages, compositor_version(packages['cosmic-comp'])

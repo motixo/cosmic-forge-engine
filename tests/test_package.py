@@ -19,6 +19,7 @@ class PackageTests(unittest.TestCase):
         release = json.loads((ROOT / 'release.json').read_text())
         self.assertEqual((bundle['format'], bundle['abi']), (1, release['abi']))
         self.assertEqual(set(bundle['files']), set(release['bundle_files']))
+        self.assertFalse(any(name.startswith(('panel/', 'greeter/')) for name in bundle['files']))
         for name, source in bundle['files'].items():
             self.assertEqual(source, (ROOT / name).read_text())
         self.assertEqual(publisher.package(ROOT), data)
