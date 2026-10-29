@@ -22,13 +22,14 @@ class PlatformTests(unittest.TestCase):
             with self.subTest(identity=identity):
                 def query(command, **_):
                     self.assertEqual(command[0], manager)
+                    self.assertEqual(command[-1], 'cosmic-comp')
                     value = command[-1] + ' ' + version + (' installed' if manager == 'dpkg-query' else '')
                     return subprocess.CompletedProcess(command, 0, stdout=value)
                 with patch('platforms.platform.freedesktop_os_release', return_value={'ID': identity}), \
                      patch('platforms.subprocess.run', side_effect=query):
                     packages, cosmic = platforms.installed_packages()
                 self.assertEqual(cosmic, '1.10.0')
-                self.assertEqual(len(packages), 4)
+                self.assertEqual(set(packages), {'cosmic-comp'})
                 self.assertIn(version, packages['cosmic-comp'])
 
     def test_derivatives_use_the_native_package_manager(self):

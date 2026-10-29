@@ -209,7 +209,8 @@ class EngineInstallerTests(unittest.TestCase):
 
     def test_native_launch_guards_fall_back_after_package_changes(self):
         import subprocess
-        for manager, version in [('rpm', '0:1.10.0-2.fc43'), ('dpkg-query', '1.10.0-1pop1 installed')]:
+        for manager, version in [('pacman', '1:1.10.0-1'), ('rpm', '0:1.10.0-2.fc43'),
+                                 ('dpkg-query', '1.10.0-1pop1 installed')]:
             prefix = self.prefix / manager
             launcher = prefix / 'bin/cosmic-comp'
             launcher.parent.mkdir(parents=True)
@@ -235,9 +236,37 @@ class EngineInstallerTests(unittest.TestCase):
             query.chmod(0o755)
             environment = dict(os.environ, PATH=str(prefix / 'bin') + ':' + os.environ['PATH'])
             self.assertEqual(subprocess.check_output([str(launcher)], env=environment, text=True).strip(), 'FORGE')
+            for name in ['cosmic-settings', 'cosmic-panel', 'cosmic-greeter']:
+                packages[name] = name + ' updated'
+            values.write_text(json.dumps(packages))
+            self.assertEqual(subprocess.check_output([str(launcher)], env=environment, text=True).strip(), 'FORGE')
             packages['cosmic-comp'] += '.updated'
             values.write_text(json.dumps(packages))
             self.assertEqual(subprocess.check_output([str(launcher)], env=environment, text=True).strip(), 'ORIGINAL')
+
+    def test_previous_package_guards_are_repaired_without_download_or_rebuild(self):
+        original, _, _ = self.legacy()
+        previous_packages = {name: name + ' 1:1.10.0-1' for name in
+                             ['cosmic-comp', 'cosmic-settings', 'cosmic-panel', 'cosmic-greeter']}
+        with patch.object(installer.subprocess, 'check_output', return_value=VERSION):
+            installer.install(self.binary, previous_packages, '1.10.0', self.prefix)
+        previous_record = json.loads(self.record.read_text())
+        binary = Path(previous_record['destination']) / 'cosmic-comp'
+        before = binary.read_bytes(), binary.stat().st_mtime_ns
+        compositor = {'cosmic-comp': previous_packages['cosmic-comp']}
+        with patch.object(sys, 'argv', ['install.py', '--build', '--prefix', str(self.prefix)]), \
+             patch.object(installer, 'installed_packages', return_value=(compositor, '1.10.0')), \
+             patch.object(installer.subprocess, 'check_output', return_value=VERSION), \
+             patch.object(installer, 'obtain', side_effect=AssertionError('must not download')), \
+             patch.object(installer.subprocess, 'run', side_effect=AssertionError('must not build')):
+            installer.main()
+        record = json.loads(self.record.read_text())
+        self.assertEqual(record['packages'], compositor)
+        self.assertEqual(record['previous'], previous_record['previous'])
+        self.assertEqual((binary.read_bytes(), binary.stat().st_mtime_ns), before)
+        self.assertEqual((self.prefix / 'state/cosmic-forge/engine-previous-compositor').read_bytes(), original)
+        for name in ['cosmic-settings', 'cosmic-panel', 'cosmic-greeter']:
+            self.assertNotIn(name, self.launcher.read_text())
 
     def test_missing_prebuilt_never_starts_an_implicit_source_build(self):
         previous, _, _ = self.legacy()

@@ -7,7 +7,7 @@ import re
 import subprocess
 
 ROOT = Path(__file__).resolve().parent
-PACKAGES = ('cosmic-comp', 'cosmic-settings', 'cosmic-panel', 'cosmic-greeter')
+PACKAGES = ('cosmic-comp',)
 
 
 def package_manager():

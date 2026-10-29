@@ -130,9 +130,14 @@ def main():
         # Check launcher ownership before starting a potentially long build.
         _, _, launcher = paths(args.prefix)
         _, record, _ = record_for(state, launcher)
-        if args.binary is None and already_installed(record, packages, version, args.prefix):
-            report_already_installed()
-            return
+        if args.binary is None and record and isinstance(record.get('packages'), dict):
+            compatible = dict(record, packages={name: record['packages'].get(name) for name in PACKAGES})
+            if already_installed(compatible, packages, version, args.prefix):
+                if record['packages'] == packages:
+                    report_already_installed()
+                else:
+                    install(Path(record['destination']) / 'cosmic-comp', packages, version, args.prefix)
+                return
         binary = args.binary
         if binary is None and args.build:
             work = ROOT / 'build/sources' / version
