@@ -102,8 +102,9 @@ class PrebuiltTests(unittest.TestCase):
         with patch.object(prebuilt.platform, 'libc_ver', return_value=('glibc', '2.35')), \
              patch.object(prebuilt, 'release_metadata', return_value=self.release), \
              patch.object(prebuilt, 'from_release', return_value=Path('/private/fixture/cosmic-comp')):
-            with patch.object(prebuilt.subprocess, 'check_output', return_value=expected):
+            with patch.object(prebuilt.subprocess, 'check_output', return_value=f'cosmic-comp 1.0.0 (git commit {expected})'):
                 self.assertEqual(prebuilt.obtain('1.10.0', config), Path('/private/fixture/cosmic-comp'))
-            with patch.object(prebuilt.subprocess, 'check_output', return_value='wrong renderer'):
-                with self.assertRaises(RuntimeError):
-                    prebuilt.obtain('1.10.0', config)
+            for revision in ['wrong renderer', expected + '0', expected + '-dirty']:
+                with self.subTest(revision=revision), patch.object(prebuilt.subprocess, 'check_output', return_value=revision):
+                    with self.assertRaises(RuntimeError):
+                        prebuilt.obtain('1.10.0', config)

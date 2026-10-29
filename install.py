@@ -14,7 +14,7 @@ import time
 
 from recovery import atomic, digest, paths, progress, record_for, restore, xdg
 from platforms import PACKAGES, installed_packages, package_manager, package_query
-from prebuilt import obtain
+from prebuilt import obtain, verify_revision
 
 ROOT = Path(__file__).resolve().parent
 
@@ -22,9 +22,9 @@ ROOT = Path(__file__).resolve().parent
 def already_installed(record, packages, version, prefix=None, candidate_digest=None):
     if not record or record.get('cosmic_version') != version or record.get('packages') != packages:
         return False
-    revision = json.loads((ROOT / 'release.json').read_text())['renderer_revision']
+    config = json.loads((ROOT / 'release.json').read_text())
     # The first Forge installer predates this field and installed renderer revision 1.
-    if record.get('renderer_revision', 1) != revision:
+    if record.get('renderer_revision', 1) != config['renderer_revision']:
         return False
     data, _, _ = paths(prefix)
     destination = Path(record.get('destination', ''))
@@ -35,6 +35,10 @@ def already_installed(record, packages, version, prefix=None, candidate_digest=N
         return False
     if binary.is_symlink() or digest(binary.read_bytes()) != record.get('binary_sha256') or not os.access(binary, os.X_OK):
         raise RuntimeError('The installed renderer changed outside Forge; preserved it')
+    try:
+        verify_revision(binary, version, config)
+    except RuntimeError:
+        return False
     return candidate_digest is None or candidate_digest == record['binary_sha256']
 
 
@@ -52,10 +56,8 @@ def install(binary, packages, version, prefix=None):
     payload = binary.read_bytes()
     if payload[:4] != b'\x7fELF' or b'cosmic-forge-engine-v1' not in payload:
         raise RuntimeError('Expected the native Forge ABI 1 renderer')
-    pins = json.loads((ROOT / 'release.json').read_text())['sources']
-    output = subprocess.check_output([str(binary), '--version'], text=True, timeout=15)
-    if pins[version] not in output:
-        raise RuntimeError('Renderer does not match the installed COSMIC version')
+    config = json.loads((ROOT / 'release.json').read_text())
+    verify_revision(binary, version, config)
     if already_installed(record, packages, version, prefix, digest(payload)):
         report_already_installed()
         return
@@ -88,7 +90,7 @@ def install(binary, packages, version, prefix=None):
             ' && [ -x ' + quote(str(executable)) + ' ]; then\n'
             '    exec ' + quote(str(executable)) + ' "$@"\nfi\n'
             'exec ' + quote(str(fallback) if previous['data'] is not None else '/usr/bin/cosmic-comp') + ' "$@"\n')
-    updated = {'abi': 1, 'renderer_revision': json.loads((ROOT / 'release.json').read_text())['renderer_revision'],
+    updated = {'abi': 1, 'renderer_revision': config['renderer_revision'],
                'cosmic_version': version, 'destination': str(destination),
                'launcher': str(launcher), 'launcher_sha256': digest(text.encode()),
                'binary_sha256': digest(payload), 'packages': packages, 'package_manager': package_manager(), 'previous': previous}

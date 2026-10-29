@@ -18,6 +18,7 @@ spec.loader.exec_module(installer)
 RELEASE = json.loads((ROOT / 'release.json').read_text())
 PIN = RELEASE['sources']['1.10.0']
 REVISION = RELEASE['renderer_revision']
+VERSION = f'cosmic-comp 1.0.0 (git commit {PIN}-forge-r{REVISION})'
 PACKAGES = {name: name + ' 1:1.10.0-1' for name in installer.PACKAGES}
 
 
@@ -37,7 +38,7 @@ class EngineInstallerTests(unittest.TestCase):
         self.enterContext(patch.object(installer, 'package_manager', return_value='pacman'))
 
     def install(self):
-        with patch.object(installer.subprocess, 'check_output', return_value=PIN):
+        with patch.object(installer.subprocess, 'check_output', return_value=VERSION):
             installer.install(self.binary, PACKAGES, '1.10.0', self.prefix)
 
     def legacy(self):
@@ -127,6 +128,7 @@ class EngineInstallerTests(unittest.TestCase):
         output = io.StringIO()
         with patch.object(sys, 'argv', ['install.py', '--prefix', str(self.prefix)]), \
              patch.object(installer, 'installed_packages', return_value=(PACKAGES, '1.10.0')), \
+             patch.object(installer.subprocess, 'check_output', return_value=VERSION), \
              patch.object(installer.subprocess, 'run', side_effect=AssertionError('must not build')), \
              patch.object(installer, 'atomic', side_effect=AssertionError('must not reinstall')), \
              contextlib.redirect_stdout(output):
@@ -137,7 +139,8 @@ class EngineInstallerTests(unittest.TestCase):
     def test_different_revision_or_packages_do_not_skip_installation(self):
         self.install()
         record = json.loads(self.record.read_text())
-        self.assertTrue(installer.already_installed(record, PACKAGES, '1.10.0', self.prefix))
+        with patch.object(installer.subprocess, 'check_output', return_value=VERSION):
+            self.assertTrue(installer.already_installed(record, PACKAGES, '1.10.0', self.prefix))
         record['renderer_revision'] = 0
         self.assertFalse(installer.already_installed(record, PACKAGES, '1.10.0', self.prefix))
         record['renderer_revision'] = REVISION
@@ -149,7 +152,21 @@ class EngineInstallerTests(unittest.TestCase):
         self.install()
         record = json.loads(self.record.read_text())
         record.pop('renderer_revision')
-        self.assertEqual(installer.already_installed(record, PACKAGES, '1.10.0', self.prefix), REVISION == 1)
+        with patch.object(installer.subprocess, 'check_output', return_value=VERSION):
+            self.assertEqual(installer.already_installed(record, PACKAGES, '1.10.0', self.prefix), REVISION == 1)
+
+    def test_wrong_binary_revision_is_neither_installed_nor_reused(self):
+        self.install()
+        record = json.loads(self.record.read_text())
+        before = {path: path.read_bytes() for path in [self.launcher, self.record]}
+        for revision in [PIN, PIN + '-forge-r1', PIN + f'-forge-r{REVISION}0',
+                         PIN + f'-forge-r{REVISION}-dirty', RELEASE['sources']['1.11.0'] + f'-forge-r{REVISION}']:
+            with self.subTest(revision=revision), \
+                 patch.object(installer.subprocess, 'check_output', return_value=f'cosmic-comp 1.0.0 (git commit {revision})'):
+                self.assertFalse(installer.already_installed(record, PACKAGES, '1.10.0', self.prefix))
+                with self.assertRaisesRegex(RuntimeError, 'revision'):
+                    installer.install(self.binary, PACKAGES, '1.10.0', self.prefix)
+                self.assertEqual({path: path.read_bytes() for path in before}, before)
 
     def test_default_install_downloads_and_build_is_an_explicit_action(self):
         for build in (False, True):
@@ -204,7 +221,7 @@ class EngineInstallerTests(unittest.TestCase):
             legacy.write_text(json.dumps({'shims': {'cosmic-comp': previous}}))
             packages = {name: name + ' ' + version for name in installer.PACKAGES}
             with patch.object(installer, 'package_manager', return_value=manager), \
-                 patch.object(installer.subprocess, 'check_output', return_value=PIN):
+                 patch.object(installer.subprocess, 'check_output', return_value=VERSION):
                 installer.install(self.binary, packages, '1.10.0', prefix)
             record = json.loads((prefix / 'state/cosmic-forge/engine-installation.json').read_text())
             # A shell fixture stands in for the installed executable while checking shell guards.

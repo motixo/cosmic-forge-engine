@@ -97,6 +97,16 @@ def from_release(release, version, machine, cache, fetch=download):
     return binary
 
 
+def verify_revision(binary, version, config):
+    expected = config['sources'][version] + '-forge-r' + str(config['renderer_revision'])
+    try:
+        output = subprocess.check_output([str(binary), '--version'], text=True, stderr=subprocess.STDOUT, timeout=15)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise RuntimeError('This engine binary cannot run on the installed libraries; build from source') from error
+    if not re.search(r'(?<![\w.+-])' + re.escape(expected) + r'(?![\w.+-])', output):
+        raise RuntimeError('Renderer revision does not match this engine package')
+
+
 def obtain(version, config, tag=None, prefix=None):
     minimum = tuple(int(part) for part in config['prebuilt']['glibc_min'].split('.'))
     libc, current = platform.libc_ver()
@@ -105,11 +115,5 @@ def obtain(version, config, tag=None, prefix=None):
                            ' or newer; build from source')
     cache = (prefix / 'cache' if prefix else xdg('XDG_CACHE_HOME', '.cache')) / 'cosmic-forge/binaries'
     binary = from_release(release_metadata(tag), version, architecture(), cache)
-    expected = config['sources'][version] + '-forge-r' + str(config['renderer_revision'])
-    try:
-        output = subprocess.check_output([str(binary), '--version'], text=True, stderr=subprocess.STDOUT, timeout=15)
-    except (OSError, subprocess.SubprocessError) as error:
-        raise RuntimeError('This prebuilt engine binary cannot run on the installed libraries; build from source') from error
-    if expected not in output:
-        raise RuntimeError('Prebuilt compositor revision does not match this engine package')
+    verify_revision(binary, version, config)
     return binary
