@@ -1,6 +1,6 @@
 # COSMIC Forge Engine
 
-Custom glass shader support for [COSMIC Forge](https://github.com/motixo/cosmic-forge).
+Custom shader support for [COSMIC Forge](https://github.com/motixo/cosmic-forge).
 Includes the compositor patches, shader runtime and installer.
 [Shader packs](https://github.com/motixo/cosmic-forge-shaders) are maintained separately.
 
