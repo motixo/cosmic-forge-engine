@@ -12,7 +12,7 @@ on:
         default: false
       release_tag:
         type: string
-        default: engine-v0.3.0
+        default: engine-v0.4.0
 
 permissions:
   contents: read
@@ -103,7 +103,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ inputs.release_tag || github.ref_name }}
-          NOTES: 'Shader compositor engine for COSMIC Forge. Prebuilt binaries for COSMIC 1.10 and 1.11 on x86_64 and ARM64; glibc 2.35+. Supports Arch, Fedora, Ubuntu and Pop!_OS. Restore selects the original system compositor and preserves preferences.'
+          NOTES: 'Compositor-only shader engine for COSMIC Forge. Validates the exact renderer revision and removes panel, Settings and greeter package guards. Existing matching binaries are reused while previous launchers are upgraded in place. Prebuilt binaries cover COSMIC 1.10/1.11 on x86_64 and ARM64 with glibc 2.35+. Restore selects the original system compositor and preserves preferences.'
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" release/* --clobber
