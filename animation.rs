@@ -30,6 +30,31 @@ struct Motion {
     index: i32,
 }
 
+#[derive(Debug)]
+pub struct Age {
+    started: Instant,
+    effect: Option<String>,
+}
+
+impl Default for Age {
+    fn default() -> Self {
+        Self {
+            started: Instant::now(),
+            effect: None,
+        }
+    }
+}
+
+impl Age {
+    pub fn seconds(&mut self, effect: &str, now: Instant) -> f32 {
+        if self.effect.as_deref() != Some(effect) {
+            self.effect = Some(effect.into());
+            self.started = now;
+        }
+        now.saturating_duration_since(self.started).as_secs_f32()
+    }
+}
+
 impl Motion {
     fn sample(&mut self, position: [f32; 2], now: Instant, index: i32) {
         if self.index == index {
@@ -209,6 +234,27 @@ mod tests {
         ));
         begin_frame(&second);
         FRAME.with_borrow(|frame| assert_eq!((frame.delta, frame.index), (0.0, 0)));
+    }
+
+    #[test]
+    fn window_age_starts_independently_and_survives_gaps_until_the_effect_changes() {
+        let now = Instant::now();
+        let mut first = Age::default();
+        let mut second = Age::default();
+        assert_eq!(first.seconds("snow", now), 0.0);
+        assert_eq!(first.seconds("snow", now + Duration::from_secs(10)), 10.0);
+        assert_eq!(second.seconds("snow", now + Duration::from_secs(10)), 0.0);
+        assert_eq!(first.seconds("snow", now + Duration::from_secs(120)), 120.0);
+        assert_eq!(
+            second.seconds("snow", now + Duration::from_secs(120)),
+            110.0
+        );
+        assert_eq!(first.seconds("ember", now + Duration::from_secs(121)), 0.0);
+        assert_eq!(first.seconds("snow", now + Duration::from_secs(122)), 0.0);
+        assert_eq!(
+            second.seconds("snow", now + Duration::from_secs(122)),
+            112.0
+        );
     }
 
     #[test]

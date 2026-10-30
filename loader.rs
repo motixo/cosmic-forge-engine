@@ -104,6 +104,7 @@ pub fn program<R: AsGlowRenderer>(
         UniformName::new("aero_color", UniformType::_1f),
         UniformName::new("aero_reflections", UniformType::_1f),
         UniformName::new("time", UniformType::_1f),
+        UniformName::new("window_age", UniformType::_1f),
         UniformName::new("delta_time", UniformType::_1f),
         UniformName::new("frame_index", UniformType::_1i),
         UniformName::new("window_position", UniformType::_2f),

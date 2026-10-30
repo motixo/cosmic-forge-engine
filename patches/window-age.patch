@@ -1,0 +1,28 @@
+diff --git a/src/backend/render/wayland/blur_effect.rs b/src/backend/render/wayland/blur_effect.rs
+--- a/src/backend/render/wayland/blur_effect.rs
++++ b/src/backend/render/wayland/blur_effect.rs
+@@ -254,6 +254,7 @@
+     pub region: Vec<Rectangle<i32, Logical>>,
+     pub commit: CommitCounter,
+     runtime_revision: u64,
++    age: forge_animation::Age,
+     window_active: bool,
+     is_dark: bool,
+     wallpaper_revision: Option<u64>,
+@@ -284,6 +285,7 @@
+             region: Vec::new(),
+             commit: CommitCounter::default(),
+             runtime_revision: 0,
++            age: forge_animation::Age::default(),
+             window_active: true,
+             is_dark: true,
+             wallpaper_revision: None,
+@@ -565,6 +567,8 @@
+             if let Some(runtime) = &runtime {
+                 uniforms.extend(runtime.parameters.iter().map(|p| Uniform::new(p.name.clone(), p.value)));
+                 uniforms.extend(forge_animation::uniforms(&state.id, runtime.animated, window_position));
++                let age = state.age.seconds(&runtime.id, std::time::Instant::now());
++                uniforms.push(Uniform::new("window_age", if runtime.animated { age } else { 0.0 }));
+                 uniforms.extend([Uniform::new("window_active", if window_active { 1.0_f32 } else { 0.0_f32 }),
+                                  Uniform::new("is_dark", if is_dark { 1.0_f32 } else { 0.0_f32 })]);
+             }

@@ -30,7 +30,13 @@ python3 build.py --cosmic-version 1.10.0
 Requires Python 3.11+, Rust, Git and COSMIC compositor development libraries.
 Upstream commits and the shader ABI are pinned in `release.json`.
 
-Renderer revision 5 supports animated shaders, scene or wallpaper backgrounds,
-and window focus and theme inputs, including wallpaper rendering on built-in effects.
+Renderer revision 6 adds `window_age`: seconds since a custom effect first
+rendered on each glass surface. Each surface has its own clock, so effects such
+as accumulating snow can progress independently on different windows.
+Moving, resizing or hiding a window does not restart it; switching to another
+custom effect resets it. The uniform is zero when animation is disabled.
+
+Shader ABI 1, animated shaders, scene or wallpaper backgrounds, window focus
+and theme inputs remain supported.
 
 GPL-3.0-only. Dependency notices are included in the repository.

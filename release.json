@@ -1,5 +1,5 @@
 {
-  "renderer_revision": 5,
+  "renderer_revision": 6,
   "upstream": "https://github.com/pop-os/cosmic-comp.git",
   "sources": {
     "1.10.0": "41497b42d9744d9963c4c6d17e8add49489b45ee",
@@ -21,6 +21,7 @@
     "patches/generic.patch",
     "patches/animation.patch",
     "patches/backdrop.patch",
+    "patches/window-age.patch",
     "glass.frag",
     "platforms.py",
     "prebuilt.py",

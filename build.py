@@ -18,7 +18,8 @@ def prepare(source, version, local=None):
     release = json.loads((ROOT / 'release.json').read_text())
     pin = release['sources'][version]
     patches = [ROOT / 'patches/glass.patch', ROOT / 'patches/runtime.patch',
-               ROOT / 'patches/generic.patch', ROOT / 'patches/animation.patch', ROOT / 'patches/backdrop.patch']
+               ROOT / 'patches/generic.patch', ROOT / 'patches/animation.patch', ROOT / 'patches/backdrop.patch',
+               ROOT / 'patches/window-age.patch']
     files = patches + [ROOT / name for name in ['runtime.rs', 'loader.rs', 'animation.rs', 'backdrop.rs', 'surface_state.rs', 'glass.frag']]
     binary_version = pin + '-forge-r' + str(release['renderer_revision'])
     expected = {'commit': pin, 'binary_version': binary_version, 'sha256': {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in files}}
