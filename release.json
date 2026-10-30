@@ -10,6 +10,7 @@
     "build.py",
     "install.py",
     "recovery.py",
+    "login_path.py",
     "release.json",
     "runtime.rs",
     "loader.rs",

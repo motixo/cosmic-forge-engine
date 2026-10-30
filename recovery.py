@@ -10,6 +10,8 @@ import os
 from pathlib import Path
 import tempfile
 
+from login_path import restore_changes
+
 SYSTEM_COMPOSITOR = Path('/usr/bin/cosmic-comp')
 
 
@@ -47,6 +49,32 @@ def progress(stage):
     print('FORGE_PROGRESS:' + stage, flush=True)
 
 
+def apply_changes(changes, writer=atomic, verify=None):
+    previous = {}
+    for path in changes:
+        if path.is_symlink():
+            raise RuntimeError(f'Preserved a replaced setup file: {path}')
+        previous[path] = (path.read_bytes(), path.stat().st_mode & 0o7777) if path.exists() else (None, 0o600)
+    completed = []
+    try:
+        for path, (data, mode) in changes.items():
+            if data is None:
+                path.unlink(missing_ok=True)
+            else:
+                writer(path, data, mode)
+            completed.append(path)
+        if verify is not None:
+            verify()
+    except (OSError, RuntimeError):
+        for path in reversed(completed):
+            data, mode = previous[path]
+            if data is None:
+                path.unlink(missing_ok=True)
+            else:
+                writer(path, data, mode)
+        raise
+
+
 def record_for(state, launcher):
     path = state / 'cosmic-forge/engine-installation.json'
     if path.is_symlink():
@@ -78,22 +106,18 @@ def restore(prefix=None):
     progress('restoring')
     _, state, launcher = paths(prefix)
     record_file, record, current = record_for(state, launcher)
-    current_mode = launcher.stat().st_mode & 0o777 if current is not None else 0o755
     if not SYSTEM_COMPOSITOR.is_file() or not os.access(SYSTEM_COMPOSITOR, os.X_OK):
         raise RuntimeError('The original COSMIC compositor is unavailable; reinstall the cosmic-comp system package first')
     with SYSTEM_COMPOSITOR.open('rb') as binary:
         if binary.read(4) != b'\x7fELF':
             raise RuntimeError('Expected the original native COSMIC system compositor; preserved the current launcher')
-    try:
-        if current is not None:
-            launcher.unlink()
-        if record:
-            record_file.unlink()
-    except OSError:
-        if current is not None:
-            atomic(launcher, current, current_mode)
-        raise
-    print('Original COSMIC compositor restored. Sign out and back in to activate it.', flush=True)
+    changes = restore_changes(launcher, (record or {}).get('login_profiles', []))
+    if current is not None:
+        changes[launcher] = (None, 0o755)
+    if record:
+        changes[record_file] = (None, 0o600)
+    apply_changes(changes)
+    print('Original COSMIC compositor restored. Log out and back in to activate it.', flush=True)
     progress('complete')
 
 

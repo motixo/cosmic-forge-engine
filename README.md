@@ -18,7 +18,19 @@ python3 recovery.py         # Restore the original system compositor
 ```
 
 Matching binaries are reused. Restore preserves settings, shaders and recovery
-files. Sign out and back in after switching compositors.
+files. Log out and back in after switching compositors.
+
+Installation checks the account's login shell with a clean PATH. If the Forge
+launcher would be missed, it adds a marked PATH block to the active Bash/Zsh/sh
+login profile, or a Fish `conf.d` snippet. Existing PATH setup is left intact
+when it already selects Forge. The check also runs when reusing an installed
+engine, without downloading or rebuilding the compositor.
+
+Original profile contents and permissions are backed up under
+`$XDG_STATE_HOME/cosmic-forge/login-profile-backups/`. Restore removes only the
+recorded Forge blocks and keeps edits outside them. Modified blocks and profile
+symlinks are preserved with instructions for manual setup. Other login shells
+require manual PATH configuration. No system profile or Settings launcher is changed.
 
 ## Development
 

@@ -27,6 +27,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - run: sudo apt-get update && sudo apt-get install -y zsh fish
       - run: python -m unittest discover -s tests -p 'test_*.py' -v
       - run: python scripts/package_engine.py
       - run: cat LICENSE LICENSE.libdisplay-info > build/release/LICENSES.txt

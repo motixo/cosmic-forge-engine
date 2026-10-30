@@ -36,6 +36,8 @@ class EngineInstallerTests(unittest.TestCase):
         self.system.chmod(0o755)
         self.enterContext(patch('recovery.SYSTEM_COMPOSITOR', self.system))
         self.enterContext(patch.object(installer, 'package_manager', return_value='pacman'))
+        # Login-shell integration is exercised with real private profiles in test_login_path.py.
+        self.enterContext(patch.object(installer, 'prepare_login_path', side_effect=lambda *a, **kw: ({}, [], None)))
 
     def install(self):
         with patch.object(installer.subprocess, 'check_output', return_value=VERSION):

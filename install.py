@@ -12,7 +12,8 @@ import shlex
 import subprocess
 import time
 
-from recovery import atomic, digest, paths, progress, record_for, restore, xdg
+from recovery import apply_changes, atomic, digest, paths, progress, record_for, restore, xdg
+from login_path import prepare as prepare_login_path
 from platforms import PACKAGES, installed_packages, package_manager, package_query
 from prebuilt import obtain, verify_revision
 
@@ -42,9 +43,25 @@ def already_installed(record, packages, version, prefix=None, candidate_digest=N
     return candidate_digest is None or candidate_digest == record['binary_sha256']
 
 
-def report_already_installed():
-    progress('already_installed')
-    print('The matching Forge glass renderer is already installed. No rebuild or reinstall needed.', flush=True)
+def login_setup(state, launcher, record, prefix):
+    launcher.parent.mkdir(parents=True, exist_ok=True)
+    if prefix is not None:
+        home = prefix / 'home'
+        home.mkdir(parents=True, exist_ok=True)
+        return prepare_login_path(state, launcher, record, home=home, environment={})
+    return prepare_login_path(state, launcher, record)
+
+
+def report_already_installed(prefix=None):
+    _, state, launcher = paths(prefix)
+    record_file, record, _ = record_for(state, launcher)
+    changes, profiles, verify = login_setup(state, launcher, record, prefix)
+    if profiles != record.get('login_profiles', []):
+        changes[record_file] = ((json.dumps(dict(record, login_profiles=profiles), indent=2) + '\n').encode(), 0o600)
+    apply_changes(changes, atomic, verify)
+    progress('complete' if verify else 'already_installed')
+    print('Login PATH repaired. Log out and back in to activate Forge.' if verify else
+          'The matching Forge glass renderer is already installed. No rebuild or reinstall needed.', flush=True)
 
 
 def install(binary, packages, version, prefix=None):
@@ -59,7 +76,7 @@ def install(binary, packages, version, prefix=None):
     config = json.loads((ROOT / 'release.json').read_text())
     verify_revision(binary, version, config)
     if already_installed(record, packages, version, prefix, digest(payload)):
-        report_already_installed()
+        report_already_installed(prefix)
         return
     progress('installing')
     previous = record['previous'] if record else {
@@ -94,16 +111,13 @@ def install(binary, packages, version, prefix=None):
                'cosmic_version': version, 'destination': str(destination),
                'launcher': str(launcher), 'launcher_sha256': digest(text.encode()),
                'binary_sha256': digest(payload), 'packages': packages, 'package_manager': package_manager(), 'previous': previous}
-    try:
-        atomic(launcher, text.encode(), 0o755)
-        atomic(record_file, (json.dumps(updated, indent=2) + '\n').encode())
-    except OSError:
-        if current is None:
-            launcher.unlink(missing_ok=True)
-        else:
-            atomic(launcher, current, current_mode)
-        raise
-    print('Glass renderer installed. Sign out and back in to activate it.', flush=True)
+    changes, profiles, verify = login_setup(state, launcher, record, prefix)
+    if profiles:
+        updated['login_profiles'] = profiles
+    changes[launcher] = (text.encode(), 0o755)
+    changes[record_file] = ((json.dumps(updated, indent=2) + '\n').encode(), 0o600)
+    apply_changes(changes, atomic, verify)
+    print('Glass renderer installed. Log out and back in to activate it.', flush=True)
     progress('complete')
 
 
@@ -134,7 +148,7 @@ def main():
             compatible = dict(record, packages={name: record['packages'].get(name) for name in PACKAGES})
             if already_installed(compatible, packages, version, args.prefix):
                 if record['packages'] == packages:
-                    report_already_installed()
+                    report_already_installed(args.prefix)
                 else:
                     install(Path(record['destination']) / 'cosmic-comp', packages, version, args.prefix)
                 return
