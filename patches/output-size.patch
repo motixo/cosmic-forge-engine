@@ -1,0 +1,56 @@
+diff --git a/src/backend/render/wayland/blur_effect.rs b/src/backend/render/wayland/blur_effect.rs
+--- a/src/backend/render/wayland/blur_effect.rs
++++ b/src/backend/render/wayland/blur_effect.rs
+@@ -255,6 +255,8 @@
+     pub commit: CommitCounter,
+     runtime_revision: u64,
+     age: forge_animation::Age,
++    output_size: [f32; 2],
++    surface_position: [f32; 2],
+     window_active: bool,
+     is_dark: bool,
+     wallpaper_revision: Option<u64>,
+@@ -286,6 +288,8 @@
+             commit: CommitCounter::default(),
+             runtime_revision: 0,
+             age: forge_animation::Age::default(),
++            output_size: [0.0; 2],
++            surface_position: [0.0; 2],
+             window_active: true,
+             is_dark: true,
+             wallpaper_revision: None,
+@@ -387,6 +391,7 @@
+     ) -> Result<Option<Self>, R::Error> {
+         let (runtime_revision, runtime) = forge_loader::current();
+         let is_dark = forge_surface_state::dark();
++        let output_size = forge_animation::output_size();
+         let window_geometry = geometry;
+         let effect = runtime.as_ref().map_or_else(|| GLASS_EFFECT.load(Ordering::Relaxed),
+             |effect| match effect.base.as_str() { "glass" => 3, "aero" => 2, _ => 1 });
+@@ -567,6 +572,8 @@
+             if let Some(runtime) = &runtime {
+                 uniforms.extend(runtime.parameters.iter().map(|p| Uniform::new(p.name.clone(), p.value)));
+                 uniforms.extend(forge_animation::uniforms(&state.id, runtime.animated, window_position));
++                uniforms.push(Uniform::new("output_size", output_size));
++                uniforms.push(Uniform::new("surface_position", window_position));
+                 let age = state.age.seconds(&runtime.id, std::time::Instant::now());
+                 uniforms.push(Uniform::new("window_age", if runtime.animated { age } else { 0.0 }));
+                 uniforms.extend([Uniform::new("window_active", if window_active { 1.0_f32 } else { 0.0_f32 }),
+@@ -582,6 +589,8 @@
+             && state.runtime_revision == runtime_revision
+             && state.window_active == window_active
+             && state.is_dark == is_dark
++            && state.output_size == output_size
++            && state.surface_position == window_position
+             && state.wallpaper_revision == wallpaper_revision
+             && state.offset == params.offset
+             && state.passes == params.passes
+@@ -611,6 +620,8 @@
+         state.runtime_revision = runtime_revision;
+         state.window_active = window_active;
+         state.is_dark = is_dark;
++        state.output_size = output_size;
++        state.surface_position = window_position;
+         state.wallpaper_revision = wallpaper_revision;
+         state.offset = params.offset;
+         state.passes = params.passes;

@@ -127,6 +127,25 @@ pub fn begin_frame(output: &Output) {
     timing.index = timing.index.wrapping_add(1);
 }
 
+pub fn output_size() -> [f32; 2] {
+    FRAME.with_borrow(|frame| {
+        frame
+            .output
+            .as_ref()
+            .and_then(|output| {
+                output.current_mode().map(|mode| {
+                    let size = output
+                        .current_transform()
+                        .transform_size(mode.size)
+                        .to_f64()
+                        .to_logical(output.current_scale().fractional_scale());
+                    [size.w as f32, size.h as f32]
+                })
+            })
+            .unwrap_or([0.0; 2])
+    })
+}
+
 pub fn uniforms(id: &Id, animated: bool, location: [f32; 2]) -> [Uniform<'static>; 5] {
     FRAME.with_borrow_mut(|frame| {
         let mut position = [0.0; 2];
@@ -196,6 +215,61 @@ mod tests {
         output::{PhysicalProperties, Subpixel},
     };
     use std::time::Duration;
+
+    #[test]
+    fn output_dimensions_follow_the_rendering_monitor_scale_rotation_and_mode() {
+        use smithay::{
+            output::{Mode, Scale},
+            utils::Transform,
+        };
+        let first = output("first");
+        let second = output("second");
+        first.change_current_state(
+            Some(Mode {
+                size: (1920, 1080).into(),
+                refresh: 60000,
+            }),
+            Some(Transform::Normal),
+            Some(Scale::Integer(1)),
+            Some((-1920, 80).into()),
+        );
+        second.change_current_state(
+            Some(Mode {
+                size: (2560, 1440).into(),
+                refresh: 60000,
+            }),
+            Some(Transform::_90),
+            Some(Scale::Fractional(1.5)),
+            Some((0, 0).into()),
+        );
+        let id = Id::new();
+        begin_frame(&first);
+        uniforms(&id, false, [10.0; 2]);
+        assert_eq!(output_size(), [1920.0, 1080.0]);
+        assert!(!active(&first));
+        begin_frame(&second);
+        uniforms(&id, false, [20.0; 2]);
+        let size = output_size();
+        assert_eq!(size[0], 960.0);
+        assert!((size[1] - 2560.0 / 1.5).abs() < 0.001);
+        assert!(!active(&second));
+        begin_frame(&first);
+        assert_eq!(output_size(), [1920.0, 1080.0]);
+        first.change_current_state(
+            Some(Mode {
+                size: (3840, 2160).into(),
+                refresh: 60000,
+            }),
+            None,
+            Some(Scale::Integer(2)),
+            None,
+        );
+        assert_eq!(output_size(), [1920.0, 1080.0]);
+        first.change_current_state(None, Some(Transform::_270), None, None);
+        assert_eq!(output_size(), [1080.0, 1920.0]);
+        FRAME.with_borrow_mut(|frame| frame.output = None);
+        assert_eq!(output_size(), [0.0; 2]);
+    }
 
     fn output(name: &str) -> Output {
         Output::new(

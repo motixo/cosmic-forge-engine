@@ -89,6 +89,8 @@ pub fn program<R: AsGlowRenderer>(
     }
     let mut uniforms = vec![
         UniformName::new("geo_size", UniformType::_2f),
+        UniformName::new("output_size", UniformType::_2f),
+        UniformName::new("surface_position", UniformType::_2f),
         UniformName::new("output_scale", UniformType::_1f),
         UniformName::new("corner_radius", UniformType::_4f),
         UniformName::new("input_to_geo", UniformType::Matrix3x3),
