@@ -12,7 +12,7 @@ on:
         default: false
       release_tag:
         type: string
-        default: engine-v0.6.0
+        default: engine-v0.6.1
 
 permissions:
   contents: read

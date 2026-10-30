@@ -1,43 +1,38 @@
-## COSMIC Forge Engine 0.6.0
+## COSMIC Forge Engine 0.6.1
 
-New timing and geometry inputs make effects respond to each window's lifetime and the
-monitor displaying it. Renderer revision **7**, shader ABI **1**.
+Fixes installations where a terminal finds Forge, but the desktop session still
+starts the original system compositor because its login PATH misses Forge's launcher.
+Renderer revision **7** and shader ABI **1** are unchanged.
 
-### Independent window timing
+### Fixed
 
-- Added `window_age`: elapsed seconds since a custom effect first rendered on
-  each glass surface. Effects such as accumulating snow can progress separately
-  on each window instead of sharing a global timer.
-- Moving, resizing, hiding or changing a window's monitor preserves its clock.
-  Selecting another custom effect starts a fresh clock. The uniform is zero
-  while animation is disabled.
+- Check the account's actual login shell with a clean PATH, instead of inheriting
+  an interactive terminal's PATH. If necessary, add the Forge launcher directory
+  to the active Bash, Zsh or POSIX sh login profile, or a Fish login snippet.
+- Repair existing installations too. Reinstalling an already matching engine
+  runs this check without downloading, rebuilding or replacing the compositor binary.
+- Back up original profile contents and permissions. Restore removes only the
+  recorded Forge block and preserves user edits outside it.
+- Roll back profile, launcher and installation-record changes if writing or the
+  final login check fails. Symlinked profiles, modified managed blocks and
+  unsupported shells are preserved with instructions for manual configuration.
+- Use **Log out** consistently in installation and recovery messages.
 
-### Monitor-aware shader geometry
+### Install or update
 
-- Added `output_size`: the width and height of the monitor currently rendering
-  the surface, in logical units, with rotation and fractional scaling applied.
-- Added `surface_position`: the surface's top-left position relative to that
-  monitor. Together these inputs let perspective effects such as Void look
-  straight ahead when a window is centered, without manual display dimensions.
-- Geometry updates when windows move between monitors or display settings
-  change. When a window spans monitors, each part uses its rendering output's
-  dimensions and coordinates.
-- Both geometry inputs work with animation disabled. Cached surfaces refresh
-  when their geometry changes without keeping static effects continuously
-  rendering.
+Install through **COSMIC Forge → Settings → Patches**, then **log out and back in**.
+If Forge was previously installed but the system compositor kept running, run
+its installation again to apply the login PATH repair.
 
-### Compatibility and installation
+Prebuilt binaries still cover pinned COSMIC **1.10.0 and 1.11.0** on **x86_64 and
+ARM64**, with **glibc 2.35+**. Shader behavior, preferences and the Settings
+launcher are unchanged; no compositor is restarted during installation.
 
-- Existing shader packs remain compatible with **shader ABI 1**. Packs using
-  `window_age` require renderer **6+**; packs using the new geometry inputs
-  require renderer **7+**.
-- Prebuilt binaries cover pinned COSMIC **1.10.0 and 1.11.0** on **x86_64 and
-  ARM64**, with **glibc 2.35+**.
-- Install through **Settings → Patches**, then sign out and back in. Restore
-  continues to select the original system compositor and preserve preferences.
+### Validation
 
-Timing and monitor geometry are recorded in separate commits. Automated
-regressions cover independent clocks, effect changes, multiple outputs,
-fractional scaling, rotation and geometry updates with animation disabled.
+45 installer, recovery and packaging tests pass, including real Bash, Zsh, Fish,
+sh and dash login checks; migration of an existing installation; quoted paths;
+preservation of profile edits; and rollback after failed writes or PATH verification.
+Release CI builds and tests all four compositor binaries before publishing.
 
-[Full source changes](https://github.com/motixo/cosmic-forge-engine/compare/engine-v0.5.1...engine-v0.6.0)
+[Full source changes](https://github.com/motixo/cosmic-forge-engine/compare/engine-v0.6.0...engine-v0.6.1)
