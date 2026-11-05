@@ -15,6 +15,17 @@ def package(root):
     if type(release.get('abi')) is not int or release['abi'] < 1 or \
        type(release.get('renderer_revision')) is not int or release['renderer_revision'] < 1:
         raise ValueError('ABI and renderer revision must be positive integers')
+    sources = release.get('sources')
+    if not isinstance(sources, dict) or not sources or any(
+            not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:-pop\.[0-9a-f]{7})?', name)
+            or not isinstance(pin, str) or not re.fullmatch(r'[0-9a-f]{40}', pin)
+            for name, pin in sources.items()):
+        raise ValueError('Invalid pinned compositor builds')
+    toolchains = release.get('toolchains')
+    if not isinstance(toolchains, dict) or set(toolchains) != set(sources) or any(
+            not isinstance(value, str) or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', value)
+            for value in toolchains.values()):
+        raise ValueError('Every compositor build must have a pinned Rust toolchain')
     names = release['bundle_files']
     if not isinstance(names, list) or not 1 <= len(names) <= 128 or \
        any(not isinstance(name, str) or len(name) > 200 or

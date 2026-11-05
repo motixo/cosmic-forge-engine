@@ -1,0 +1,40 @@
+name: Check upstream compositor builds
+
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - id: upstream
+        run: python scripts/check_upstream.py --write
+      - name: Open a compatibility PR and dispatch its builds
+        if: steps.upstream.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.upstream.outputs.branch }}
+        run: |
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null; then
+            echo "A compatibility branch already exists: $BRANCH"
+            exit 0
+          fi
+          git switch -c "$BRANCH"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add release.json
+          git commit -m 'compat: pin new compositor builds for testing'
+          git push origin "$BRANCH"
+          gh pr create --base main --head "$BRANCH" --title 'Test new COSMIC compositor builds' --body-file build/upstream-pr.md
+          gh workflow run release.yml --ref "$BRANCH" -f publish=false

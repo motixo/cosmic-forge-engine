@@ -211,6 +211,7 @@ class EngineInstallerTests(unittest.TestCase):
 
     def test_native_launch_guards_fall_back_after_package_changes(self):
         import subprocess
+        self.system.write_text('#!/bin/sh\necho SYSTEM\n')
         for manager, version in [('pacman', '1:1.10.0-1'), ('rpm', '0:1.10.0-2.fc43'),
                                  ('dpkg-query', '1.10.0-1pop1 installed')]:
             prefix = self.prefix / manager
@@ -238,13 +239,30 @@ class EngineInstallerTests(unittest.TestCase):
             query.chmod(0o755)
             environment = dict(os.environ, PATH=str(prefix / 'bin') + ':' + os.environ['PATH'])
             self.assertEqual(subprocess.check_output([str(launcher)], env=environment, text=True).strip(), 'FORGE')
+            disabled = dict(environment, COSMIC_FORGE_DISABLE='1')
+            self.assertEqual(subprocess.check_output([str(launcher)], env=disabled, text=True).strip(), 'SYSTEM')
             for name in ['cosmic-settings', 'cosmic-panel', 'cosmic-greeter']:
                 packages[name] = name + ' updated'
             values.write_text(json.dumps(packages))
             self.assertEqual(subprocess.check_output([str(launcher)], env=environment, text=True).strip(), 'FORGE')
             packages['cosmic-comp'] += '.updated'
             values.write_text(json.dumps(packages))
-            self.assertEqual(subprocess.check_output([str(launcher)], env=environment, text=True).strip(), 'ORIGINAL')
+            self.assertEqual(subprocess.check_output([str(launcher)], env=environment, text=True).strip(), 'SYSTEM')
+
+    def test_previous_launcher_revision_is_upgraded_without_replacing_the_binary(self):
+        original, _, _ = self.legacy()
+        self.install()
+        record = json.loads(self.record.read_text())
+        record.pop('launcher_revision')
+        self.record.write_text(json.dumps(record))
+        binary = Path(record['destination']) / 'cosmic-comp'
+        before = binary.read_bytes(), binary.stat().st_mtime_ns
+        with patch.object(installer.subprocess, 'check_output', return_value=VERSION):
+            self.assertFalse(installer.already_installed(record, PACKAGES, '1.10.0', self.prefix))
+        self.install()
+        self.assertEqual((binary.read_bytes(), binary.stat().st_mtime_ns), before)
+        self.assertEqual(json.loads(self.record.read_text())['launcher_revision'], installer.LAUNCHER_REVISION)
+        self.assertEqual((self.prefix / 'state/cosmic-forge/engine-previous-compositor').read_bytes(), original)
 
     def test_previous_package_guards_are_repaired_without_download_or_rebuild(self):
         original, _, _ = self.legacy()

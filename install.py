@@ -12,16 +12,20 @@ import shlex
 import subprocess
 import time
 
+import recovery
+
 from recovery import apply_changes, atomic, digest, paths, progress, record_for, restore, xdg
 from login_path import prepare as prepare_login_path
 from platforms import PACKAGES, installed_packages, package_manager, package_query
 from prebuilt import obtain, verify_revision
 
 ROOT = Path(__file__).resolve().parent
+LAUNCHER_REVISION = 2
 
 
 def already_installed(record, packages, version, prefix=None, candidate_digest=None):
-    if not record or record.get('cosmic_version') != version or record.get('packages') != packages:
+    if not record or record.get('launcher_revision', 1) != LAUNCHER_REVISION or \
+       record.get('cosmic_version') != version or record.get('packages') != packages:
         return False
     config = json.loads((ROOT / 'release.json').read_text())
     # The first Forge installer predates this field and installed renderer revision 1.
@@ -106,8 +110,8 @@ def install(binary, packages, version, prefix=None):
             'if [ "${COSMIC_FORGE_DISABLE:-0}" != 1 ] && ' + guard +
             ' && [ -x ' + quote(str(executable)) + ' ]; then\n'
             '    exec ' + quote(str(executable)) + ' "$@"\nfi\n'
-            'exec ' + quote(str(fallback) if previous['data'] is not None else '/usr/bin/cosmic-comp') + ' "$@"\n')
-    updated = {'abi': 1, 'renderer_revision': config['renderer_revision'],
+            'exec ' + quote(str(recovery.SYSTEM_COMPOSITOR)) + ' "$@"\n')
+    updated = {'abi': 1, 'renderer_revision': config['renderer_revision'], 'launcher_revision': LAUNCHER_REVISION,
                'cosmic_version': version, 'destination': str(destination),
                'launcher': str(launcher), 'launcher_sha256': digest(text.encode()),
                'binary_sha256': digest(payload), 'packages': packages, 'package_manager': package_manager(), 'previous': previous}
