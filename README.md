@@ -7,11 +7,6 @@ Includes the compositor patches, shader runtime and installer.
 Supports pinned COSMIC 1.10/1.11 releases on Arch Linux, Fedora, Ubuntu and Pop!_OS.
 Prebuilt binaries are available for x86_64 and ARM64 with glibc 2.35+.
 
-Pop!_OS compositor snapshots are tested separately from COSMIC epoch tags.
-Build `1.11.0-pop.ec674cd` supports the official Pop!_OS 24.04 package ending in
-`~ec674cd`; the original 1.10/1.11 builds remain available. A session version
-alone does not establish compositor compatibility.
-
 ## Install
 
 Open **Settings → Patches** in Forge, or run from this repository:
@@ -37,16 +32,6 @@ recorded Forge blocks and keeps edits outside them. Modified blocks and profile
 symlinks are preserved with instructions for manual setup. Other login shells
 require manual PATH configuration. No system profile or Settings launcher is changed.
 
-After a compositor package update, the launcher falls back to `/usr/bin/cosmic-comp`
-until a matching Forge engine is installed. Previous launchers remain recovery
-data and are never used as this fallback. Restore also works when the updated
-compositor build is not supported yet.
-
-Daily upstream checks watch official COSMIC tags and the Pop!_OS release package
-index. New builds open compatibility PRs and dispatch builds and renderer tests;
-they require review before merging and publication. Run
-`python3 scripts/check_upstream.py` to check without changing files.
-
 ## Development
 
 ```sh
@@ -56,7 +41,6 @@ python3 build.py --cosmic-version 1.10.0
 
 Requires Python 3.11+, Rust, Git and COSMIC compositor development libraries.
 Upstream commits and the shader ABI are pinned in `release.json`.
-Each build's Rust toolchain is pinned there too; the Pop!_OS snapshot requires Rust 1.95+.
 
 Renderer revision 7 retains shader ABI 1 and adds the following shader inputs:
 
