@@ -32,6 +32,10 @@ class PackageTests(unittest.TestCase):
                 (root / name).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(ROOT / name, root / name)
             invalid = [dict(release, abi=0), dict(release, renderer_revision=True),
+                       dict(release, sources={'../escape': 'a' * 40}),
+                       dict(release, sources={'1.11.0': 'not-a-commit'}),
+                       dict(release, toolchains={}),
+                       dict(release, toolchains=dict.fromkeys(release['sources'], 'stable')),
                        dict(release, bundle_files=['../escape']),
                        dict(release, bundle_files=['/tmp/escape']),
                        dict(release, bundle_files=release['bundle_files'] + ['install.py']),

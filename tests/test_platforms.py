@@ -43,6 +43,21 @@ class PlatformTests(unittest.TestCase):
         with patch('platforms.subprocess.check_output', return_value='cosmic-comp ' + PIN):
             self.assertEqual(platforms.compositor_version('cosmic-comp 0.1~1780000000~24.04 installed'), '1.10.0')
 
+    def test_pop_compositor_snapshot_is_selected_independently_of_the_session_version(self):
+        self.assertEqual(platforms.compositor_version(
+            'cosmic-comp 0.1~1793802426~24.04~ec674cd installed'), '1.11.0-pop.ec674cd')
+        # A future semantic package label must still respect its actual snapshot commit.
+        self.assertEqual(platforms.compositor_version(
+            'cosmic-comp 1.11.0~1793802426~24.04~ec674cd installed'), '1.11.0-pop.ec674cd')
+
+    def test_unknown_snapshot_cannot_fall_back_to_a_stale_binary_or_epoch_label(self):
+        for label in ('0.1', '1.11.0'):
+            package = f'cosmic-comp {label}~1793802426~24.04~abcdef0 installed'
+            with patch('platforms.subprocess.check_output', return_value='cosmic-comp ' + PIN) as query:
+                with self.assertRaisesRegex(RuntimeError, r'installed cosmic-comp .*abcdef0'):
+                    platforms.compositor_version(package)
+                query.assert_not_called()
+
     def test_unknown_or_unpublished_versions_are_refused(self):
         for version in ['1.9.0-1', '1.12.0-1', '2.0.0-1', '0.1~abc1234']:
             with patch('platforms.subprocess.check_output', return_value='unknown revision'):

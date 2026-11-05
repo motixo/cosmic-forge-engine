@@ -12,7 +12,7 @@ on:
         default: false
       release_tag:
         type: string
-        default: engine-v0.6.1
+        default: engine-v0.6.2
 
 permissions:
   contents: read
@@ -35,7 +35,8 @@ jobs:
         run: |
           python - <<'PYTHON' >> "$GITHUB_OUTPUT"
           import json
-          matrix = [{'version': v, 'runner': r} for v in json.load(open('release.json'))['sources'] for r in ['ubuntu-22.04', 'ubuntu-22.04-arm']]
+          release = json.load(open('release.json'))
+          matrix = [{'version': v, 'toolchain': release['toolchains'][v], 'cache_toolchain': release['toolchains'][v].removesuffix('.0'), 'runner': r} for v in release['sources'] for r in ['ubuntu-22.04', 'ubuntu-22.04-arm']]
           print('value=' + json.dumps({'include': matrix}))
           PYTHON
       - uses: actions/upload-artifact@v4
@@ -44,14 +45,14 @@ jobs:
           path: build/release/*
 
   binary:
-    if: (startsWith(github.ref, 'refs/tags/engine-v') && !github.event.forced) || github.event_name == 'workflow_dispatch'
+    if: (startsWith(github.ref, 'refs/tags/engine-v') && !github.event.forced) || github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
     needs: check
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.check.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
     env:
-      RUSTUP_TOOLCHAIN: '1.93.0'
+      RUSTUP_TOOLCHAIN: ${{ matrix.toolchain }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -59,7 +60,7 @@ jobs:
           python-version: '3.12'
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: '1.93.0'
+          toolchain: ${{ matrix.toolchain }}
           rustflags: ''
       - name: Native build dependencies
         run: |
@@ -72,8 +73,8 @@ jobs:
             ~/.cargo/git
             build/portable-target
             build/portable-native
-          key: compositor-${{ matrix.runner }}-${{ runner.arch }}-${{ matrix.version }}-rust1.93-glibc2.35-${{ hashFiles('runtime.rs', 'loader.rs', 'animation.rs', 'backdrop.rs', 'surface_state.rs', 'patches/*', 'glass.frag', 'scripts/build_binary.py', 'build.py') }}
-          restore-keys: compositor-${{ matrix.runner }}-${{ runner.arch }}-${{ matrix.version }}-rust1.93-glibc2.35-
+          key: compositor-${{ matrix.runner }}-${{ runner.arch }}-${{ matrix.version }}-rust${{ matrix.cache_toolchain }}-glibc2.35-${{ hashFiles('runtime.rs', 'loader.rs', 'animation.rs', 'backdrop.rs', 'surface_state.rs', 'patches/*', 'glass.frag', 'scripts/build_binary.py', 'build.py') }}
+          restore-keys: compositor-${{ matrix.runner }}-${{ runner.arch }}-${{ matrix.version }}-rust${{ matrix.cache_toolchain }}-glibc2.35-
       - name: Build portable compositor
         env:
           COSMIC_VERSION: ${{ matrix.version }}

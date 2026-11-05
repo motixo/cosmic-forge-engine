@@ -35,18 +35,26 @@ def package_query(manager, name):
 def compositor_version(package):
     sources = json.loads((ROOT / 'release.json').read_text())['sources']
     version_text = package.split()[1]
-    match = re.match(r'^(?:[0-9]+:)?([0-9]+\.[0-9]+\.[0-9]+)(?:[-+~.]|$)', version_text)
-    if match and match[1] in sources:
-        return match[1]
-    # Pop packages may use 0.1~timestamp~distribution~commit instead of epoch versions.
-    for candidate in [version_text, None]:
-        if candidate is None:
-            candidate = subprocess.check_output(['/usr/bin/cosmic-comp', '--version'], text=True, timeout=15)
+    # Pop!_OS can update this commit while cosmic-session keeps the same epoch version.
+    snapshot = re.search(r'~([0-9a-f]{7,40})(?:~dev)?$', version_text)
+    if snapshot:
+        for version, commit in sources.items():
+            if commit.startswith(snapshot[1]):
+                return version
+    else:
+        match = re.match(r'^(?:[0-9]+:)?([0-9]+\.[0-9]+\.[0-9]+)(?:[-+~.]|$)', version_text)
+        if match and match[1] in sources:
+            return match[1]
+        candidate = subprocess.check_output(['/usr/bin/cosmic-comp', '--version'], text=True, timeout=15)
         hashes = re.findall(r'(?<![0-9a-f])[0-9a-f]{7,40}(?![0-9a-f])', candidate)
         for version, commit in sources.items():
             if any(commit.startswith(value) for value in hashes):
                 return version
-    raise RuntimeError('No tested Forge engine for this COSMIC version. Published versions: ' + ', '.join(sources))
+    detail = f' (commit {snapshot[1]})' if snapshot else ''
+    raise RuntimeError(f'No tested Forge engine for installed cosmic-comp {version_text}{detail}. '
+                       'Tested builds: ' + ', '.join(sources) + '. '
+                       'Keep using the system compositor until a matching engine update is available; '
+                       'the cosmic-session version alone does not identify this build.')
 
 
 def installed_packages():
