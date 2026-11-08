@@ -1,6 +1,6 @@
-## Engine 0.6.3
+## Engine 0.6.4
 
-- Keep Rain Glass drops moving smoothly when speed changes.
-- Stop Rain Glass animation redraws at zero rain intensity.
+- Fix choppy shader animations in the Launcher and notification popups.
+- Reuse unchanged backdrops while shaders animate.
 
-Renderer revision **8**, shader ABI **1**. Update through **Settings → Patches**, then log out and back in.
+Update through **Settings → Patches**, then log out and back in.
