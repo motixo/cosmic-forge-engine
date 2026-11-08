@@ -1,0 +1,196 @@
+diff --git a/src/backend/render/element.rs b/src/backend/render/element.rs
+--- a/src/backend/render/element.rs
++++ b/src/backend/render/element.rs
+@@ -475,15 +475,16 @@
+ 
+ pub struct DamageElement {
+     id: Id,
+-    geometry: Rectangle<i32, Logical>,
++    geometry: Rectangle<f64, Logical>,
+ }
+ 
+ impl DamageElement {
+     pub fn new(geometry: Rectangle<i32, Logical>) -> DamageElement {
+-        DamageElement {
+-            id: Id::new(),
+-            geometry,
+-        }
++        Self::with_id(Id::new(), geometry.to_f64())
++    }
++
++    pub(crate) fn with_id(id: Id, geometry: Rectangle<f64, Logical>) -> Self {
++        Self { id, geometry }
+     }
+ }
+ 
+@@ -501,7 +502,7 @@
+     }
+ 
+     fn geometry(&self, scale: Scale<f64>) -> Rectangle<i32, Physical> {
+-        self.geometry.to_f64().to_physical(scale).to_i32_round()
++        self.geometry.to_physical(scale).to_i32_round()
+     }
+ 
+     fn damage_since(
+diff --git a/src/backend/render/wayland/blur_effect.rs b/src/backend/render/wayland/blur_effect.rs
+--- a/src/backend/render/wayland/blur_effect.rs
++++ b/src/backend/render/wayland/blur_effect.rs
+@@ -31,7 +31,10 @@
+ use tracing::trace;
+ 
+ use crate::{
+-    backend::render::{element::AsGlowRenderer, wayland::clipped_surface::ClippingShader},
++    backend::render::{
++        element::{AsGlowRenderer, DamageElement},
++        wayland::clipped_surface::ClippingShader,
++    },
+     wayland::handlers::background_effect::ComputedBlurRegionCachedState,
+ };
+ 
+@@ -247,6 +250,7 @@
+ #[derive(Debug)]
+ pub struct BlurState {
+     pub id: Id,
++    animation_id: Id,
+     pub renderer_id: Option<ContextId<GlesTexture>>,
+     pub src: Size<f64, Buffer>,
+     pub offset: f64,
+@@ -280,6 +284,7 @@
+     fn default() -> Self {
+         BlurState {
+             id: Id::new(),
++            animation_id: Id::new(),
+             renderer_id: None,
+             src: Size::new(0., 0.),
+             offset: 0.,
+@@ -310,6 +315,7 @@
+ 
+ pub struct BlurElement {
+     id: Id,
++    animation_damage: Option<DamageElement>,
+     commit: CommitCounter,
+     src: Size<f64, Buffer>,
+     extended_offset: Point<f64, Logical>,
+@@ -326,6 +332,10 @@
+ }
+ 
+ impl BlurElement {
++    pub(crate) fn take_animation_damage(&mut self) -> Option<DamageElement> {
++        self.animation_damage.take()
++    }
++
+     pub fn from_state<R: ImportAll + AsGlowRenderer>(
+         renderer: &mut R,
+         state: &mut BlurState,
+@@ -585,7 +595,11 @@
+         }
+ 
+         let animated = runtime_program.is_some() && runtime.as_ref().is_some_and(|effect| effect.animated);
+-        let dirty = animated || !(state
++        // Damage above the glass redraws the shader without invalidating its own backdrop.
++        let animation_damage = (animated && wallpaper.is_none()).then(|| {
++            DamageElement::with_id(state.animation_id.clone(), geo.to_logical(output_scale))
++        });
++        let dirty = (animated && animation_damage.is_none()) || !(state
+             .renderer_id
+             .as_ref()
+             .is_some_and(|id| id == &renderer_id)
+@@ -647,6 +661,7 @@
+ 
+         Ok(Some(BlurElement {
+             id: state.id.clone(),
++            animation_damage,
+             commit: state.commit,
+             src,
+             geometry,
+@@ -747,6 +762,7 @@
+         cache: &UserDataMap,
+     ) -> Result<(), <R>::Error> {
+         if self.wallpaper.is_some() { return Ok(()); }
++        trace!(?dst, passes = self.passes, "Capturing scene backdrop");
+         let transform = frame.transformation();
+         let tex_size = self.src.to_i32_round();
+         let glow_frame = <R as AsGlowRenderer>::glow_frame_mut(frame);
+diff --git a/src/backend/render/wayland/mod.rs b/src/backend/render/wayland/mod.rs
+--- a/src/backend/render/wayland/mod.rs
++++ b/src/backend/render/wayland/mod.rs
+@@ -12,7 +12,7 @@
+ use tracing::warn;
+ 
+ use crate::backend::render::{
+-    element::AsGlowRenderer,
++    element::{AsGlowRenderer, DamageElement},
+     wayland::{blur_effect::BlurElement, clipped_surface::ClippedSurfaceRenderElement},
+ };
+ 
+@@ -27,6 +27,7 @@
+ render_elements! {
+     pub SurfaceRenderElement<R> where R: AsGlowRenderer + ImportAll, R::TextureId: Send;
+     Blur=BlurElement,
++    AnimationDamage=DamageElement,
+     Clipped=ClippedSurfaceRenderElement<R>,
+     Wayland=WaylandSurfaceRenderElement<R>,
+ }
+@@ -138,13 +139,19 @@
+                 passed_main = true;
+             }
+ 
+-            if let Ok(Some(elem)) = blur {
++            if let Ok(Some(mut elem)) = blur {
++                let push_blur = |push: &mut dyn FnMut(SurfaceRenderElement<R>)| {
++                    if let Some(damage) = elem.take_animation_damage() {
++                        push(damage.into());
++                    }
++                    push(elem.into());
++                };
+                 if let Some(push_below) = push_below.as_mut()
+                     && passed_main
+                 {
+-                    push_below(elem.into());
++                    push_blur(*push_below);
+                 } else {
+-                    push_above(elem.into());
++                    push_blur(push_above);
+                 }
+             }
+         },
+diff --git a/src/utils/iced/mod.rs b/src/utils/iced/mod.rs
+--- a/src/utils/iced/mod.rs
++++ b/src/utils/iced/mod.rs
+@@ -75,7 +75,7 @@
+ 
+ use crate::{
+     backend::render::{
+-        element::AsGlowRenderer,
++        element::{AsGlowRenderer, DamageElement},
+         wayland::blur_effect::{BlurElement, BlurState},
+     },
+     utils::iced::state::State,
+@@ -1245,11 +1245,17 @@
+                     radii,
+                     (internal_ref.theme.cosmic().frosted as u8 + 1) as usize,
+                 ) {
+-                    Ok(Some(elem)) => {
++                    Ok(Some(mut elem)) => {
++                        let push_blur = |push: &mut dyn FnMut(IcedRenderElement<R>)| {
++                            if let Some(damage) = elem.take_animation_damage() {
++                                push(damage.into());
++                            }
++                            push(elem.into());
++                        };
+                         if let Some(push_below) = push_below {
+-                            push_below(elem.into())
++                            push_blur(push_below);
+                         } else {
+-                            push_above(elem.into())
++                            push_blur(push_above);
+                         }
+                     }
+                     Ok(None) => {}
+@@ -1264,4 +1270,5 @@
+     pub IcedRenderElement<R> where R: ImportMem + AsGlowRenderer, R::TextureId: Send;
+     UI=MemoryRenderBufferRenderElement<R>,
+     Blur=BlurElement,
+-}
++    AnimationDamage=DamageElement,
++}
