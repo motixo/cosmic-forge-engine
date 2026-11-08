@@ -16,6 +16,48 @@ use std::{
     time::Instant,
 };
 
+pub const CLOCK_UNIFORM: &str = "forge_animation_clock";
+
+#[derive(Clone, Copy)]
+pub struct Clock {
+    anchor: Instant,
+    phase: f64,
+    rate: f64,
+}
+
+impl Clock {
+    pub fn new(now: Instant, rate: f64) -> Self {
+        Self {
+            anchor: now,
+            phase: 0.0,
+            rate,
+        }
+    }
+
+    fn seconds(self, now: Instant) -> f64 {
+        self.phase + now.saturating_duration_since(self.anchor).as_secs_f64() * self.rate
+    }
+
+    pub fn set_rate(&mut self, now: Instant, rate: f64) {
+        if self.rate != rate {
+            self.phase = self.seconds(now);
+            self.anchor = now;
+            self.rate = rate;
+        }
+    }
+
+    pub fn uniform(self, animated: bool) -> Uniform<'static> {
+        let seconds = FRAME.with_borrow(|frame| {
+            if animated {
+                frame.now.map_or(0.0, |now| self.seconds(now) as f32)
+            } else {
+                0.0
+            }
+        });
+        Uniform::new(CLOCK_UNIFORM, (seconds, 1.0_f32))
+    }
+}
+
 #[derive(Default)]
 struct Timing {
     previous: Option<Instant>,
@@ -215,6 +257,20 @@ mod tests {
         output::{PhysicalProperties, Subpixel},
     };
     use std::time::Duration;
+
+    #[test]
+    fn changing_rate_preserves_elapsed_phase() {
+        let start = Instant::now();
+        let mut clock = Clock::new(start, 1.0);
+        let first_change = start + Duration::from_secs(600);
+        clock.set_rate(first_change, 3.0);
+        assert_eq!(clock.seconds(first_change), 600.0);
+
+        let second_change = first_change + Duration::from_secs(2);
+        clock.set_rate(second_change, 0.25);
+        assert_eq!(clock.seconds(second_change), 606.0);
+        assert_eq!(clock.seconds(second_change + Duration::from_secs(4)), 607.0);
+    }
 
     #[test]
     fn output_dimensions_follow_the_rendering_monitor_scale_rotation_and_mode() {

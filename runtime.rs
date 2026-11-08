@@ -54,6 +54,21 @@ pub fn identifier(value: &str) -> bool {
 }
 
 impl RuntimeEffect {
+    pub fn animation_rate(&self) -> Option<f64> {
+        self.parameters
+            .iter()
+            .find(|p| p.name == "forge_animation_speed_percent")
+            .map(|p| (f64::from(p.value) / 100.0).clamp(0.25, 3.0))
+    }
+
+    pub fn animation_active(&self) -> bool {
+        self.animated
+            && !self
+                .parameters
+                .iter()
+                .any(|p| p.name == "forge_animation_intensity_percent" && p.value <= 0.0)
+    }
+
     pub fn glass_blur(&self) -> u8 {
         self.parameters
             .iter()

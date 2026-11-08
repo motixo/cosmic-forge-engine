@@ -42,13 +42,18 @@ python3 build.py --cosmic-version 1.10.0
 Requires Python 3.11+, Rust, Git and COSMIC compositor development libraries.
 Upstream commits and the shader ABI are pinned in `release.json`.
 
-Renderer revision 7 retains shader ABI 1 and adds the following shader inputs:
+Shader ABI 1 provides the following shader inputs:
 
 | Uniform | Available since | Meaning |
 | --- | --- | --- |
 | `window_age` | Renderer 6 | Seconds since this custom effect first rendered on this glass surface. |
 | `output_size` | Renderer 7 | Current rendering monitor width and height in logical units. |
 | `surface_position` | Renderer 7 | Surface top-left relative to that monitor, in logical units. |
+| `forge_animation_clock` | Renderer 8 | Adjusted animation time in `.x` and an availability flag in `.y`. |
+
+Map a `forge_animation_speed_percent` parameter to use the adjusted clock.
+Changing speed (25–300%) preserves the elapsed phase. Set the optional
+`forge_animation_intensity_percent` parameter to zero to suspend animation redraws.
 
 Each surface has its own `window_age` clock. Moving, resizing or hiding a window
 does not restart it; switching to another custom effect resets it. The uniform

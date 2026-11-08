@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 use super::{
     blur_effect,
+    forge_animation::{CLOCK_UNIFORM, Clock},
     forge_runtime::{Backdrop, RuntimeEffect},
 };
 use crate::backend::render::element::AsGlowRenderer;
@@ -10,10 +11,22 @@ use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
     sync::{Arc, Mutex},
+    time::Instant,
 };
 
-static CURRENT: Mutex<(u64, Option<Arc<RuntimeEffect>>, Backdrop)> =
-    Mutex::new((0, None, Backdrop::Scene));
+struct Current {
+    revision: u64,
+    runtime: Option<Arc<RuntimeEffect>>,
+    backdrop: Backdrop,
+    clock: Option<Clock>,
+}
+
+static CURRENT: Mutex<Current> = Mutex::new(Current {
+    revision: 0,
+    runtime: None,
+    backdrop: Backdrop::Scene,
+    clock: None,
+});
 
 pub fn configure(config: &cosmic_config::Config) {
     use cosmic_config::ConfigGet;
@@ -26,12 +39,12 @@ pub fn configure(config: &cosmic_config::Config) {
     });
     // Values and shader source arrive in one config key, so render threads see a complete effect.
     let selected = config.get::<String>("glass_effect").unwrap_or_default();
-    let runtime = config
+    let mut runtime = config
         .get::<RuntimeEffect>("forge_runtime")
         .ok()
-        .filter(|effect| effect.valid() && effect.id == selected)
-        .map(Arc::new);
-    if let Some(effect) = &runtime {
+        .filter(|effect| effect.valid() && effect.id == selected);
+    if let Some(effect) = &mut runtime {
+        effect.animated = effect.animation_active();
         blur_effect::set_glass_effect(match effect.base.as_str() {
             "glass" => 3,
             "aero" => 2,
@@ -43,20 +56,34 @@ pub fn configure(config: &cosmic_config::Config) {
         |effect| effect.backdrop,
     );
     let mut current = CURRENT.lock().unwrap();
-    if current.1 != runtime || current.2 != backdrop {
-        current.0 = current.0.wrapping_add(1);
-        current.1 = runtime;
-        current.2 = backdrop;
+    if current.runtime.as_deref() != runtime.as_ref() || current.backdrop != backdrop {
+        current.clock = runtime.as_ref().and_then(|effect| {
+            let rate = effect.animation_rate()?;
+            let now = Instant::now();
+            let same_effect = current
+                .runtime
+                .as_ref()
+                .is_some_and(|old| old.id == effect.id);
+            let mut clock = current
+                .clock
+                .filter(|_| same_effect)
+                .unwrap_or_else(|| Clock::new(now, rate));
+            clock.set_rate(now, rate);
+            Some(clock)
+        });
+        current.revision = current.revision.wrapping_add(1);
+        current.runtime = runtime.map(Arc::new);
+        current.backdrop = backdrop;
     }
 }
 
-pub fn current() -> (u64, Option<Arc<RuntimeEffect>>) {
+pub fn current() -> (u64, Option<Arc<RuntimeEffect>>, Option<Clock>) {
     let current = CURRENT.lock().unwrap();
-    (current.0, current.1.clone())
+    (current.revision, current.runtime.clone(), current.clock)
 }
 
 pub fn backdrop() -> Backdrop {
-    CURRENT.lock().unwrap().2
+    CURRENT.lock().unwrap().backdrop
 }
 
 #[derive(Default)]
@@ -114,6 +141,9 @@ pub fn program<R: AsGlowRenderer>(
         UniformName::new("window_active", UniformType::_1f),
         UniformName::new("is_dark", UniformType::_1f),
     ];
+    if effect.animation_rate().is_some() {
+        uniforms.push(UniformName::new(CLOCK_UNIFORM, UniformType::_2f));
+    }
     uniforms.extend(
         effect
             .parameters
