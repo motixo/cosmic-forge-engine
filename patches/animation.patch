@@ -175,3 +175,42 @@ index ed92e84..dc25e91 100644
                          surface.render.ping();
                      } else {
                          surface.pending = false;
+diff --git a/src/backend/render/mod.rs b/src/backend/render/mod.rs
+index 9ad6158..c6b3e76 100644
+--- a/src/backend/render/mod.rs
++++ b/src/backend/render/mod.rs
+@@ -20,6 +20,7 @@ use crate::{
+             wayland::{
+                 SurfaceRenderElement,
+                 blur_effect::BlurShaders,
++                forge_animation,
+                 clipped_surface::{CLIPPING_SHADER, ClippingShader},
+                 push_render_elements_from_surface_tree,
+             },
+@@ -58,7 +59,7 @@ use smithay::{
+             Color32F, Offscreen, Texture, TextureFilter,
+             damage::{Error as RenderError, OutputDamageTracker, RenderOutputResult},
+             element::{
+-                Element, Id, Kind, NamespacedElement, RenderElement, WeakId,
++                Element, Id, Kind, RenderElement, WeakId,
+                 texture::{TextureRenderBuffer, TextureRenderElement},
+                 utils::{
+                     ConstrainAlign, ConstrainScaleBehavior, CropRenderElement, Relocate,
+@@ -882,7 +883,7 @@ where
+                     FRAME_TIME_FILTER,
+                     &mut |elem| {
+                         elements.extend(
+-                            crop_to_output(NamespacedElement::new(elem, namespace).into())
++                            crop_to_output(forge_animation::namespace_element(elem, namespace).into())
+                                 .map(Into::into),
+                         )
+                     },
+@@ -930,7 +931,7 @@ where
+                     FRAME_TIME_FILTER,
+                     &mut |elem| {
+                         elements.extend(
+-                            crop_to_output(NamespacedElement::new(elem, namespace).into())
++                            crop_to_output(forge_animation::namespace_element(elem, namespace).into())
+                                 .map(Into::into),
+                         )
+                     },

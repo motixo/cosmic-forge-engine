@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 use smithay::{
     backend::renderer::{
-        element::{Id, RenderElementStates},
+        element::{Element, Id, NamespacedElement, RenderElementStates},
         gles::Uniform,
     },
     output::Output,
@@ -221,6 +221,17 @@ pub fn uniforms(id: &Id, animated: bool, location: [f32; 2]) -> [Uniform<'static
     })
 }
 
+pub fn namespace_element<E: Element>(element: E, namespace: usize) -> NamespacedElement<E> {
+    let element = NamespacedElement::new(element, namespace);
+    // Layer visibility is reported under the ID used by the wrapped element.
+    FRAME.with_borrow_mut(|frame| {
+        if frame.elements.contains(element.as_ref().id()) {
+            frame.elements.insert(element.id().clone());
+        }
+    });
+    element
+}
+
 pub fn observe(states: &RenderElementStates) {
     FRAME.with_borrow_mut(|frame| {
         frame.visible |= frame.elements.iter().any(|id| {
@@ -419,6 +430,33 @@ mod tests {
         uniforms(&id, true, [0.0; 2]);
         finish_frame(&first, &RenderElementStates::default());
         assert!(!active(&first));
+    }
+
+    #[test]
+    fn a_visible_animated_layer_keeps_its_output_active() {
+        use crate::backend::render::element::DamageElement;
+
+        let output = output("layer");
+        let layer = DamageElement::new(Default::default());
+        let id = layer.id().clone();
+        begin_frame(&output);
+        uniforms(&id, true, [0.0; 2]);
+        let rendered_id = namespace_element(layer, 7).id().clone();
+        assert_ne!(rendered_id, id);
+        let mut states = RenderElementStates::default();
+        states.states.insert(
+            rendered_id,
+            RenderElementState {
+                visible_area: 8,
+                presentation_state: RenderElementPresentationState::Rendering { reason: None },
+                needs_capture: false,
+            },
+        );
+        finish_frame(&output, &states);
+        assert!(active(&output));
+        begin_frame(&output);
+        finish_frame(&output, &RenderElementStates::default());
+        assert!(!active(&output));
     }
 
     #[test]
