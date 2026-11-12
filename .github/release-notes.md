@@ -1,3 +1,1 @@
-- Support the latest Pop!_OS compositor build and fix window frame colors after a theme change.
-- Reduce redraw and blur work for animated effects, including Rain Glass.
-- Fix engine updates and rebuilding after source changes.
+- Support the Pop!_OS 24.04 compositor update at `8129317` and retain the window frame color fix.

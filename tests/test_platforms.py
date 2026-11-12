@@ -14,11 +14,13 @@ PIN = json.loads((ROOT / 'release.json').read_text())['sources']['1.10.0']
 
 
 class PlatformTests(unittest.TestCase):
-    def test_current_pop_noble_compositor_snapshot_is_supported(self):
-        self.assertEqual(
-            platforms.compositor_version("cosmic-comp 0.1~1794310577~24.04~66524a0 installed"),
-            "1.11.0-pop.66524a0",
-        )
+    def test_pop_noble_compositor_snapshots_are_supported(self):
+        for build, commit in [('1794310577', '66524a0'), ('1794501573', '8129317')]:
+            with self.subTest(commit=commit):
+                self.assertEqual(
+                    platforms.compositor_version(f'cosmic-comp 0.1~{build}~24.04~{commit} installed'),
+                    f'1.11.0-pop.{commit}',
+                )
 
     def test_native_package_managers_capture_exact_versions(self):
         for identity, manager, version in [('arch', 'pacman', '1:1.10.0-1'),
