@@ -1,0 +1,51 @@
+diff --git a/src/backend/render/wayland/blur_effect.rs b/src/backend/render/wayland/blur_effect.rs
+--- a/src/backend/render/wayland/blur_effect.rs
++++ b/src/backend/render/wayland/blur_effect.rs
+@@ -326,7 +326,7 @@
+     offset: f64,
+     passes: usize,
+     uniforms: Vec<Uniform<'static>>,
+-    crystal: bool,
++    needs_sharp: bool,
+     wallpaper: Option<forge_backdrop::Image>,
+     sample_origin: Point<f64, Buffer>,
+ }
+@@ -674,6 +674,11 @@
+             state.commit.increment();
+         }
+ 
++        let needs_sharp = custom_glass
++            && (runtime_program.is_none() || runtime.as_ref().is_none_or(|effect| {
++                !effect.source.starts_with("// forge-backdrop: blurred-only\n")
++            }));
++
+         Ok(Some(BlurElement {
+             id: state.id.clone(),
+             animation_damage,
+@@ -704,7 +709,7 @@
+                 })
+                 .collect(),
+             uniforms,
+-            crystal: custom_glass,
++            needs_sharp,
+             wallpaper,
+             sample_origin: (geometry.loc.x * output_scale, geometry.loc.y * output_scale).into(),
+         }))
+@@ -811,7 +816,7 @@
+         .unwrap();
+         std::mem::drop(renderer);
+ 
+-        let mut sharp = if self.crystal && self.passes > 0 {
++        let mut sharp = if self.needs_sharp && self.passes > 0 {
+             let sharp_cache =
+                 cache.get_or_insert_threadsafe(CrystalSharpTexture::<R::TextureId>::default);
+             let mut sharp_entry = sharp_cache.0.lock().unwrap();
+@@ -906,7 +911,7 @@
+         if let Some(tex) = wallpaper_texture.as_ref().or_else(|| texture_ref.as_ref().and_then(|texture| texture.as_ref())) {
+             let sharp_cache = cache.and_then(|cache| cache.get::<CrystalSharpTexture<R::TextureId>>());
+             let sharp_entry = sharp_cache.map(|cache| cache.0.lock().unwrap());
+-            let sharp = if self.crystal {
++            let sharp = if self.needs_sharp {
+                 let gles = BorrowMut::<GlesFrame>::borrow_mut(
+                     <R as AsGlowRenderer>::glow_frame_mut(frame),
+                 );

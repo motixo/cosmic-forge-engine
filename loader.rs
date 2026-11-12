@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-only
 use super::{
     blur_effect,
-    forge_animation::{CLOCK_UNIFORM, Clock},
-    forge_runtime::{Backdrop, RuntimeEffect},
+    forge_animation::{self, CLOCK_UNIFORM, Clock},
+    forge_effect_map,
+    forge_runtime::{
+        ANIMATION_FOCUS_KEY, ANIMATION_FPS_KEY, AnimationActivity, Backdrop,
+        LEGACY_LOW_ANIMATION_FPS_KEY, RuntimeEffect, resolve_animation_fps,
+    },
 };
 use crate::backend::render::element::AsGlowRenderer;
 use smithay::backend::renderer::gles::{GlesRenderer, GlesTexProgram, UniformName, UniformType};
@@ -19,6 +23,8 @@ struct Current {
     runtime: Option<Arc<RuntimeEffect>>,
     backdrop: Backdrop,
     clock: Option<Clock>,
+    activity: AnimationActivity,
+    focus_only: bool,
 }
 
 static CURRENT: Mutex<Current> = Mutex::new(Current {
@@ -26,10 +32,16 @@ static CURRENT: Mutex<Current> = Mutex::new(Current {
     runtime: None,
     backdrop: Backdrop::Scene,
     clock: None,
+    activity: AnimationActivity::Static,
+    focus_only: false,
 });
 
 pub fn configure(config: &cosmic_config::Config) {
     use cosmic_config::ConfigGet;
+    forge_animation::set_fps(resolve_animation_fps(
+        config.get::<u16>(ANIMATION_FPS_KEY).ok(),
+        config.get::<u16>(LEGACY_LOW_ANIMATION_FPS_KEY).ok(),
+    ));
     static ANNOUNCE: std::sync::Once = std::sync::Once::new();
     ANNOUNCE.call_once(|| {
         if let Some(directory) = std::env::var_os("XDG_RUNTIME_DIR") {
@@ -39,12 +51,11 @@ pub fn configure(config: &cosmic_config::Config) {
     });
     // Values and shader source arrive in one config key, so render threads see a complete effect.
     let selected = config.get::<String>("glass_effect").unwrap_or_default();
-    let mut runtime = config
+    let runtime = config
         .get::<RuntimeEffect>("forge_runtime")
         .ok()
         .filter(|effect| effect.valid() && effect.id == selected);
-    if let Some(effect) = &mut runtime {
-        effect.animated = effect.animation_active();
+    if let Some(effect) = &runtime {
         blur_effect::set_glass_effect(match effect.base.as_str() {
             "glass" => 3,
             "aero" => 2,
@@ -55,7 +66,12 @@ pub fn configure(config: &cosmic_config::Config) {
         || config.get::<Backdrop>("forge_backdrop").unwrap_or_default(),
         |effect| effect.backdrop,
     );
+    let focus_only = config.get::<bool>(ANIMATION_FOCUS_KEY).unwrap_or_default();
     let mut current = CURRENT.lock().unwrap();
+    if current.focus_only != focus_only {
+        current.focus_only = focus_only;
+        current.revision = current.revision.wrapping_add(1);
+    }
     if current.runtime.as_deref() != runtime.as_ref() || current.backdrop != backdrop {
         current.clock = runtime.as_ref().and_then(|effect| {
             let rate = effect.animation_rate()?;
@@ -71,15 +87,30 @@ pub fn configure(config: &cosmic_config::Config) {
             clock.set_rate(now, rate);
             Some(clock)
         });
+        current.activity = runtime
+            .as_ref()
+            .map_or(AnimationActivity::Static, RuntimeEffect::animation_activity);
         current.revision = current.revision.wrapping_add(1);
         current.runtime = runtime.map(Arc::new);
         current.backdrop = backdrop;
     }
 }
 
-pub fn current() -> (u64, Option<Arc<RuntimeEffect>>, Option<Clock>) {
+pub fn current() -> (
+    u64,
+    Option<Arc<RuntimeEffect>>,
+    Option<Clock>,
+    AnimationActivity,
+    bool,
+) {
     let current = CURRENT.lock().unwrap();
-    (current.revision, current.runtime.clone(), current.clock)
+    (
+        current.revision,
+        current.runtime.clone(),
+        current.clock,
+        current.activity,
+        current.focus_only,
+    )
 }
 
 pub fn backdrop() -> Backdrop {
@@ -90,12 +121,16 @@ pub fn backdrop() -> Backdrop {
 struct Cache {
     key: Option<u64>,
     program: Option<GlesTexProgram>,
+    rain: Option<forge_effect_map::FieldPrograms>,
 }
 
 pub fn program<R: AsGlowRenderer>(
     renderer: &mut R,
     effect: &RuntimeEffect,
-) -> Option<GlesTexProgram> {
+) -> (
+    Option<GlesTexProgram>,
+    Option<forge_effect_map::FieldPrograms>,
+) {
     let mut hash = DefaultHasher::new();
     effect.source.hash(&mut hash);
     effect.base.hash(&mut hash);
@@ -112,7 +147,7 @@ pub fn program<R: AsGlowRenderer>(
     };
     let mut cache = cache.lock().unwrap();
     if cache.key == Some(key) {
-        return cache.program.clone();
+        return (cache.program.clone(), cache.rain.clone());
     }
     let mut uniforms = vec![
         UniformName::new("geo_size", UniformType::_2f),
@@ -150,8 +185,38 @@ pub fn program<R: AsGlowRenderer>(
             .iter()
             .map(|p| UniformName::new(p.name.clone(), UniformType::_1f)),
     );
-    let result = BorrowMut::<GlesRenderer>::borrow_mut(renderer.glow_renderer_mut())
-        .compile_custom_texture_shader(&effect.source, &uniforms);
+    let source = if forge_effect_map::Kind::from_source(&effect.source).is_some() {
+        uniforms.push(UniformName::new("forge_effect_map_tex", UniformType::_1i));
+        uniforms.push(UniformName::new("forge_effect_map_shade", UniformType::_1i));
+        uniforms.push(UniformName::new(
+            "forge_effect_map_enabled",
+            UniformType::_1f,
+        ));
+        std::borrow::Cow::Owned(effect.source.replacen(
+            "//_DEFINES_",
+            "//_DEFINES_\n#define FORGE_EFFECT_MAP_SAMPLE",
+            1,
+        ))
+    } else {
+        std::borrow::Cow::Borrowed(effect.source.as_str())
+    };
+    let renderer = BorrowMut::<GlesRenderer>::borrow_mut(renderer.glow_renderer_mut());
+    let result = renderer.compile_custom_texture_shader(source.as_ref(), &uniforms);
+    cache.rain = if result.is_ok()
+        && effect
+            .source
+            .starts_with("// forge-effect-map: rain-runoff-v1\n// forge-rain-field: v1\n")
+    {
+        match forge_effect_map::FieldPrograms::new(renderer, source.as_ref(), &uniforms) {
+            Ok(programs) => Some(programs),
+            Err(error) => {
+                tracing::info!(?error, "Full-resolution Rain programs unavailable");
+                None
+            }
+        }
+    } else {
+        None
+    };
     cache.program = match result {
         Ok(program) => Some(program),
         Err(error) => {
@@ -164,5 +229,5 @@ pub fn program<R: AsGlowRenderer>(
         }
     };
     cache.key = Some(key);
-    cache.program.clone()
+    (cache.program.clone(), cache.rain.clone())
 }

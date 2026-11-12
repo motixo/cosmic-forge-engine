@@ -1,0 +1,329 @@
+diff --git a/src/backend/kms/surface/mod.rs b/src/backend/kms/surface/mod.rs
+index 6c27d2c..0141983 100644
+--- a/src/backend/kms/surface/mod.rs
++++ b/src/backend/kms/surface/mod.rs
+@@ -140,6 +140,7 @@ pub struct SurfaceThreadState {
+     compositor: Option<GbmDrmOutput>,
+ 
+     state: QueueState,
++    forge_tick_pending: bool,
+     timings: Timings,
+     frame_callback_seq: usize,
+     thread_sender: Sender<SurfaceCommand>,
+@@ -539,6 +540,7 @@ fn surface_thread(
+         vrr_mode: AdaptiveSync::Disabled,
+ 
+         state: QueueState::Idle,
++        forge_tick_pending: false,
+         timings: Timings::new(None, None, false, target_node),
+         frame_callback_seq: 0,
+         thread_sender,
+@@ -881,7 +883,7 @@ impl SurfaceThreadState {
+             QueueState::WaitingForEstimatedVBlankAndQueued { .. } => unreachable!(),
+         };
+ 
+-        if redraw_needed || self.shell.read().animations_going() || forge_animation::active(&self.output) {
++        if redraw_needed || self.shell.read().animations_going() || forge_animation::native_active(&self.output) {
+             let vblank_frame = tracy_client::Client::running()
+                 .unwrap()
+                 .non_continuous_frame(self.vblank_frame_name);
+@@ -889,6 +891,7 @@ impl SurfaceThreadState {
+ 
+             self.queue_redraw(false);
+         }
++        self.schedule_forge_tick();
+         self.send_frame_callbacks();
+     }
+ 
+@@ -908,12 +911,27 @@ impl SurfaceThreadState {
+ 
+         self.frame_callback_seq = self.frame_callback_seq.wrapping_add(1);
+ 
+-        if force || self.shell.read().animations_going() || forge_animation::active(&self.output) {
++        if force || self.shell.read().animations_going() || forge_animation::native_active(&self.output) {
+             self.queue_redraw(false);
+         }
++        self.schedule_forge_tick();
+         self.send_frame_callbacks();
+     }
+ 
++    fn schedule_forge_tick(&mut self) {
++        forge_animation::schedule_tick(
++            &self.loop_handle,
++            &self.output,
++            &mut self.forge_tick_pending,
++            |state, _, due| {
++                state.forge_tick_pending = false;
++                if due {
++                    state.queue_redraw(false);
++                }
++            },
++        );
++    }
++
+     fn queue_redraw(&mut self, force: bool) {
+         let Some(_compositor) = self.compositor.as_mut() else {
+             return;
+@@ -1019,7 +1037,7 @@ impl SurfaceThreadState {
+                 .map_err(|err| anyhow::format_err!("Failed to create renderer: {:?}", err))?
+         };
+ 
+-        forge_animation::begin_frame(&self.output);
++        forge_animation::begin_vblank_frame(&self.output);
+         self.timings.start_render(&self.clock);
+ 
+         let mut additional_frame_flags = FrameFlags::empty();
+diff --git a/src/backend/render/wayland/blur_effect.rs b/src/backend/render/wayland/blur_effect.rs
+index 60e3611..114b3ad 100644
+--- a/src/backend/render/wayland/blur_effect.rs
++++ b/src/backend/render/wayland/blur_effect.rs
+@@ -399,7 +399,7 @@ impl BlurElement {
+         radii: [u8; 4],
+         strength: usize,
+     ) -> Result<Option<Self>, R::Error> {
+-        let (runtime_revision, runtime, animation_clock) = forge_loader::current();
++        let (runtime_revision, runtime, animation_clock, animation_activity) = forge_loader::current();
+         let is_dark = forge_surface_state::dark();
+         let output_size = forge_animation::output_size();
+         let window_geometry = geometry;
+@@ -578,6 +578,7 @@ impl BlurElement {
+             }
+         }
+         let wallpaper_revision = wallpaper.as_ref().map(|image| image.revision);
++        let mut animation_changed = false;
+         if runtime_program.is_some() {
+             if let Some(runtime) = &runtime {
+                 uniforms.extend(runtime.parameters.iter().map(|p| Uniform::new(p.name.clone(), p.value)));
+@@ -587,19 +588,33 @@ impl BlurElement {
+                 }
+                 uniforms.push(Uniform::new("output_size", output_size));
+                 uniforms.push(Uniform::new("surface_position", window_position));
+-                let age = state.age.seconds(&runtime.id, std::time::Instant::now());
++                let age = state.age.seconds(&runtime.id, forge_animation::sample_time());
++                let running = animation_activity.needs_frame(age);
++                if running {
++                    forge_animation::track(&state.id);
++                }
++                // A capped animation may finish at a different time on each output.
++                animation_changed = forge_animation::animation_step()
++                    && (running || forge_animation::previous_sample_time()
++                        .is_some_and(|previous| animation_activity.needs_frame(state.age.elapsed(previous))));
+                 uniforms.push(Uniform::new("window_age", if runtime.animated { age } else { 0.0 }));
+                 uniforms.extend([Uniform::new("window_active", if window_active { 1.0_f32 } else { 0.0_f32 }),
+                                  Uniform::new("is_dark", if is_dark { 1.0_f32 } else { 0.0_f32 })]);
+             }
+         }
+ 
+-        let animated = runtime_program.is_some() && runtime.as_ref().is_some_and(|effect| effect.animated);
+-        // Damage above the glass redraws the shader without invalidating its own backdrop.
+-        let animation_damage = (animated && wallpaper.is_none()).then(|| {
+-            DamageElement::with_id(state.animation_id.clone(), geo.to_logical(output_scale))
++        // Keep the marker in the same stack position between ticks so the
++        // damage tracker can reuse the captured backdrop.
++        let animate_scene = wallpaper.is_none() && runtime_program.is_some()
++            && runtime.as_ref().is_some_and(|effect| effect.animated);
++        let animation_damage = animate_scene.then(|| {
++            DamageElement::with_id(
++                state.animation_id.clone(),
++                geo.to_logical(output_scale),
++                animation_changed,
++            )
+         });
+-        let dirty = (animated && animation_damage.is_none()) || !(state
++        let dirty = (animation_changed && animation_damage.is_none()) || !(state
+             .renderer_id
+             .as_ref()
+             .is_some_and(|id| id == &renderer_id)
+@@ -794,17 +809,9 @@ where
+             texture_entry.as_ref().unwrap(),
+         )
+         .unwrap();
+-        let mut off_texture = renderer
+-            .as_mut()
+-            .create_buffer(Fourcc::Abgr8888, tex_size)
+-            .map_err(R::from_gles_error)?;
+         std::mem::drop(renderer);
+ 
+-        let sync = blit_from_active_fb(gles_frame, src, dst, transform, &mut texture)
+-            .map_err(R::from_gles_error)?;
+-        gles_frame.wait(&sync).map_err(R::from_gles_error)?;
+-
+-        if self.crystal && self.passes > 0 {
++        let mut sharp = if self.crystal && self.passes > 0 {
+             let sharp_cache =
+                 cache.get_or_insert_threadsafe(CrystalSharpTexture::<R::TextureId>::default);
+             let mut sharp_entry = sharp_cache.0.lock().unwrap();
+@@ -823,25 +830,38 @@ where
+                     .map_err(R::from_gles_error)?;
+                 *sharp_entry = Some(R::tex_from_gl(&context, texture));
+             }
+-            let mut sharp = R::tex_to_gl(&context, sharp_entry.as_ref().unwrap()).unwrap();
+-            std::mem::drop(renderer);
+-            let sync = blit_from_active_fb(gles_frame, src, dst, transform, &mut sharp)
+-                .map_err(R::from_gles_error)?;
+-            gles_frame.wait(&sync).map_err(R::from_gles_error)?;
+-        } else if let Some(sharp) = cache.get::<CrystalSharpTexture<R::TextureId>>() {
+-            sharp.0.lock().unwrap().take();
+-        }
++            Some(R::tex_to_gl(&context, sharp_entry.as_ref().unwrap()).unwrap())
++        } else {
++            if let Some(sharp) = cache.get::<CrystalSharpTexture<R::TextureId>>() {
++                sharp.0.lock().unwrap().take();
++            }
++            None
++        };
+ 
++        // The first downsample can read the original directly, so sharp glass
++        // needs only one capture even when both textures are sampled later.
++        let target = sharp.as_mut().unwrap_or(&mut texture);
++        let sync = blit_from_active_fb(gles_frame, src, dst, transform, target)
++            .map_err(R::from_gles_error)?;
++        gles_frame.wait(&sync).map_err(R::from_gles_error)?;
++        if self.passes == 0 {
++            return Ok(());
++        }
++        let mut renderer = gles_frame.renderer();
++        let mut off_texture = renderer
++            .as_mut()
++            .create_buffer(Fourcc::Abgr8888, tex_size)
++            .map_err(R::from_gles_error)?;
+         let mut textures = [&mut texture, &mut off_texture];
+         render_blur(
+-            gles_frame.renderer().as_mut(),
++            renderer.as_mut(),
+             &self.scaling_shaders,
+             &mut textures,
++            sharp.as_ref(),
+             self.offset,
+             self.passes,
+         )
+         .map_err(R::from_gles_error)?;
+-
+         Ok(())
+     }
+ 
+@@ -1061,6 +1081,7 @@ pub(crate) fn render_blur(
+     renderer: &mut GlesRenderer,
+     shaders: &BlurShaders,
+     textures: &mut [&mut GlesTexture; 2],
++    original: Option<&GlesTexture>,
+     offset: f64,
+     passes: usize,
+ ) -> Result<(), GlesError> {
+@@ -1102,8 +1123,9 @@ pub(crate) fn render_blur(
+                 ffi::CLAMP_TO_EDGE as i32,
+             );
+         })?;
++        let source = if i == 0 { original.unwrap_or(src_tex) } else { src_tex };
+         frame.render_texture_from_to(
+-            src_tex,
++            source,
+             Rectangle::from_size(adjusted_tex_size.to_f64()),
+             Rectangle::from_size(target_tex_size),
+             &[Rectangle::from_size(target_tex_size)],
+diff --git a/src/backend/x11.rs b/src/backend/x11.rs
+index dc25e91..efdb5ae 100644
+--- a/src/backend/x11.rs
++++ b/src/backend/x11.rs
+@@ -149,6 +149,7 @@ impl X11State {
+             render: ping.clone(),
+             dirty: false,
+             pending: true,
++            forge_tick_pending: false,
+             screen_filter_state: ScreenFilterStorage::default(),
+         });
+ 
+@@ -210,6 +211,7 @@ pub struct Surface {
+     render: ping::Ping,
+     dirty: bool,
+     pending: bool,
++    forge_tick_pending: bool,
+     screen_filter_state: ScreenFilterStorage,
+ }
+ 
+@@ -395,6 +397,7 @@ pub fn init_backend(
+         state.notify_ready();
+     }
+ 
++    let forge_tick_handle = event_loop.handle();
+     event_loop
+         .handle()
+         .insert_source(backend, move |event, _, state| match event {
+@@ -465,11 +468,25 @@ pub fn init_backend(
+                     .iter_mut()
+                     .find(|s| s.window.id() == window_id)
+                 {
+-                    if surface.dirty || forge_animation::active(&surface.output) {
++                    if surface.dirty || forge_animation::native_active(&surface.output) {
+                         surface.render.ping();
+                     } else {
+                         surface.pending = false;
+                     }
++                    forge_animation::schedule_tick(
++                        &forge_tick_handle,
++                        &surface.output,
++                        &mut surface.forge_tick_pending,
++                        |state, output, due| {
++                            let backend = state.backend.x11();
++                            if let Some(surface) = backend.surfaces.iter_mut().find(|s| s.output == *output) {
++                                surface.forge_tick_pending = false;
++                                if due {
++                                    backend.schedule_render(output);
++                                }
++                            }
++                        },
++                    );
+                 }
+             }
+             X11Event::Input {
+diff --git a/src/config/mod.rs b/src/config/mod.rs
+index ea31ed5..0263185 100644
+--- a/src/config/mod.rs
++++ b/src/config/mod.rs
+@@ -863,6 +863,8 @@ fn config_changed(config: cosmic_config::Config, keys: Vec<String>, state: &mut
+     for key in &keys {
+         match key.as_str() {
+             "forge_runtime"
++            | "forge_animation_fps"
++            | "forge_animation_fps_low"
+             | "forge_backdrop"
+             | "glass_effect"
+             | "aero_blur_amount"
+diff --git a/src/backend/render/element.rs b/src/backend/render/element.rs
+--- a/src/backend/render/element.rs
++++ b/src/backend/render/element.rs
+@@ -476,15 +476,16 @@
+ pub struct DamageElement {
+     id: Id,
+     geometry: Rectangle<f64, Logical>,
++    damaged: bool,
+ }
+ 
+ impl DamageElement {
+     pub fn new(geometry: Rectangle<i32, Logical>) -> DamageElement {
+-        Self::with_id(Id::new(), geometry.to_f64())
+-    }
+-
+-    pub(crate) fn with_id(id: Id, geometry: Rectangle<f64, Logical>) -> Self {
+-        Self { id, geometry }
++        Self::with_id(Id::new(), geometry.to_f64(), true)
++    }
++
++    pub(crate) fn with_id(id: Id, geometry: Rectangle<f64, Logical>, damaged: bool) -> Self {
++        Self { id, geometry, damaged }
+     }
+ }
+ 
+@@ -510,7 +511,11 @@
+         scale: Scale<f64>,
+         _commit: Option<CommitCounter>,
+     ) -> DamageSet<i32, Physical> {
+-        DamageSet::from_slice(&[Rectangle::from_size(self.geometry(scale).size)])
++        if self.damaged {
++            DamageSet::from_slice(&[Rectangle::from_size(self.geometry(scale).size)])
++        } else {
++            DamageSet::default()
++        }
+     }
+ }
+ 

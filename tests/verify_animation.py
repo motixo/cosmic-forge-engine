@@ -51,7 +51,7 @@ def runtime(source, animated=True, speed=100, base='glass'):
 
 def shader(body):
     return SOURCE.replace('void main() {', 'uniform float time;\nuniform float delta_time;\n'
-                          'uniform int frame_index;\nuniform vec2 window_position;\n'
+                          'uniform highp int frame_index;\nuniform vec2 window_position;\n'
                           'uniform vec2 window_velocity;\nuniform float forge_speed;\nvoid main() {').replace(
                           '    color *= mask * alpha;', body + '\n    color *= mask * alpha;')
 

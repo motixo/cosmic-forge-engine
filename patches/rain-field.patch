@@ -1,0 +1,100 @@
+diff --git a/src/backend/render/wayland/blur_effect.rs b/src/backend/render/wayland/blur_effect.rs
+--- a/src/backend/render/wayland/blur_effect.rs
++++ b/src/backend/render/wayland/blur_effect.rs
+@@ -343,6 +343,7 @@
+     geometry: Rectangle<f64, Logical>,
+     scaling_shaders: BlurShaders,
+     render_shader: GlesTexProgram,
++    rain_field: Option<forge_effect_map::FieldPrograms>,
+     effect_map: Option<(Arc<RuntimeEffect>, forge_effect_map::Kind, Option<forge_effect_map::Key>)>,
+     region: Vec<Rectangle<i32, Logical>>,
+     offset: f64,
+@@ -580,7 +581,7 @@
+             }
+         }
+ 
+-        let runtime_program = runtime.as_ref().and_then(|effect| forge_loader::program(renderer, effect));
++        let (runtime_program, rain_field) = runtime.as_ref().map(|effect| forge_loader::program(renderer, effect)).unwrap_or_default();
+         let wallpaper = if forge_backdrop::selected() == Backdrop::Wallpaper {
+             forge_backdrop::current(renderer, params.offset, params.passes)?
+         } else { None };
+@@ -734,6 +735,7 @@
+                 ClippingShader::get(renderer)
+             },
+             effect_map,
++            rain_field,
+             offset: state.offset,
+             passes: state.passes,
+             region: region
+@@ -927,7 +929,14 @@
+             .map_err(R::from_gles_error)?;
+         let mut renderer = gles_frame.renderer();
+         renderer.as_mut().wait(&sync).map_err(R::from_gles_error)?;
++        let note_capture = || {
++            if self.rain_field.is_some() {
++                cache.get_or_insert_threadsafe(Mutex::<forge_effect_map::BackdropMotion>::default)
++                    .lock().unwrap().capture(hint.is_some());
++            }
++        };
+         if self.passes == 0 {
++            note_capture();
+             return Ok(());
+         }
+         render_blur(
+@@ -945,6 +954,7 @@
+         if keep_original {
+             pyramid.scene = Some(scene);
+         }
++        note_capture();
+         if let Some(dirty) = dirty {
+             static FIRST_PARTIAL: std::sync::Once = std::sync::Once::new();
+             FIRST_PARTIAL.call_once(|| tracing::info!(?dirty, "Updated damaged blur region"));
+@@ -1022,7 +1032,32 @@
+                 uniforms.push(Uniform::new("forge_effect_map_shade", 3_i32));
+                 uniforms.push(Uniform::new("forge_effect_map_enabled", if map.is_some() { 1.0_f32 } else { 0.0_f32 }));
+             }
+-            let textures = [sharp.as_ref(), map.as_ref().map(|(water, _)| water), map.as_ref().and_then(|(_, shade)| shade.as_ref())];
++            let rain = (|| {
++                let programs = self.rain_field.as_ref()?;
++                let (effect, _, key) = self.effect_map.as_ref()?;
++                if !effect.animated || self.wallpaper.is_some() {
++                    return None;
++                }
++                let changed = cache.and_then(|data| data.get::<Mutex<forge_effect_map::BackdropMotion>>())
++                    .is_some_and(|activity| activity.lock().unwrap().take());
++                if !changed && !forge_effect_map::field_is_current() {
++                    return None;
++                }
++                let (atlas, _) = map.as_ref()?;
++                let gles = BorrowMut::<GlesFrame>::borrow_mut(<R as AsGlowRenderer>::glow_frame_mut(frame));
++                let context = gles.renderer().as_ref().context_id();
++                let source = R::tex_to_gl(&context, tex)?;
++                forge_effect_map::rain_field(gles, key.as_ref()?, programs, &source, src, dst, atlas, &uniforms, changed)
++            })();
++            if let Some((field, _)) = rain.as_ref() {
++                let size = field.size();
++                uniforms.push(Uniform::new("forge_rain_field_size", (size.w as f32, size.h as f32)));
++            }
++            let textures = [
++                sharp.as_ref(),
++                rain.as_ref().map(|(field, _)| field).or_else(|| map.as_ref().map(|(water, _)| water)),
++                rain.as_ref().map(|(_, shade)| shade).or_else(|| map.as_ref().and_then(|(_, shade)| shade.as_ref())),
++            ];
+             let previous_binding = if textures.iter().any(Option::is_some) {
+                 Some(
+                     BorrowMut::<GlesFrame>::borrow_mut(<R as AsGlowRenderer>::glow_frame_mut(frame))
+@@ -1053,8 +1088,13 @@
+             } else {
+                 None
+             };
++            let shader = if rain.is_some() {
++                &self.rain_field.as_ref().unwrap().sample
++            } else {
++                &self.render_shader
++            };
+             BorrowMut::<GlesFrame>::borrow_mut(<R as AsGlowRenderer>::glow_frame_mut(frame))
+-                .override_default_tex_program(self.render_shader.clone(), uniforms);
++                .override_default_tex_program(shader.clone(), uniforms);
+             let result = frame.render_texture_from_to(
+                 tex,
+                 src,

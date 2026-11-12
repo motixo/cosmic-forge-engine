@@ -1,0 +1,190 @@
+diff --git a/src/backend/render/wayland/blur_effect.rs b/src/backend/render/wayland/blur_effect.rs
+index 3a2ad79..0d47803 100644
+--- a/src/backend/render/wayland/blur_effect.rs
++++ b/src/backend/render/wayland/blur_effect.rs
+@@ -1,13 +1,13 @@
+ use std::{
+     borrow::{Borrow, BorrowMut},
+     sync::{
+-        LazyLock, Mutex,
++        Arc, LazyLock, Mutex,
+         atomic::{AtomicBool, AtomicU8, AtomicU16, Ordering},
+     },
+ };
+ 
+ use glam::{Affine2, Mat3, Vec2};
+-use super::{forge_animation, forge_loader, forge_backdrop, forge_surface_state, forge_runtime::Backdrop};
++use super::{forge_animation, forge_loader, forge_backdrop, forge_effect_map, forge_surface_state, forge_runtime::{Backdrop, RuntimeEffect}};
+ use smithay::{
+     backend::{
+         allocator::Fourcc,
+@@ -322,6 +322,7 @@ pub struct BlurElement {
+     geometry: Rectangle<f64, Logical>,
+     scaling_shaders: BlurShaders,
+     render_shader: GlesTexProgram,
++    effect_map: Option<(Arc<RuntimeEffect>, forge_effect_map::Kind, Option<forge_effect_map::Key>)>,
+     region: Vec<Rectangle<i32, Logical>>,
+     offset: f64,
+     passes: usize,
+@@ -674,10 +675,23 @@ impl BlurElement {
+             state.commit.increment();
+         }
+ 
+-        let needs_sharp = custom_glass
+-            && (runtime_program.is_none() || runtime.as_ref().is_none_or(|effect| {
+-                !effect.source.starts_with("// forge-backdrop: blurred-only\n")
+-            }));
++        let needs_sharp = custom_glass && (runtime_program.is_none()
++            || runtime.as_ref().is_none_or(|effect| !effect.source.starts_with("// forge-backdrop: blurred-only\n")));
++        let effect_map = runtime.filter(|_| runtime_program.is_some()).and_then(|effect| {
++            let kind = forge_effect_map::Kind::from_source(&effect.source)?;
++            let size = kind.size(geo.size, window_geometry.size.w);
++            let key = (size.w > 0 && size.h > 0
++                && i64::from(size.w) * i64::from(size.h) <= 5 * 1024 * 1024)
++                .then(|| forge_effect_map::Key {
++                    context: BorrowMut::<GlesRenderer>::borrow_mut(renderer.glow_renderer_mut()).egl_context().get_context_handle() as usize,
++                    revision: runtime_revision,
++                    size,
++                    logical_size: [(window_geometry.size.w as f32).to_bits(), (window_geometry.size.h as f32).to_bits()],
++                    scale: (output_scale as f32).to_bits(),
++                    accent: theme_accent.map(f32::to_bits),
++                });
++            Some((effect, kind, key))
++        });
+ 
+         Ok(Some(BlurElement {
+             id: state.id.clone(),
+@@ -698,6 +712,7 @@ impl BlurElement {
+             } else {
+                 ClippingShader::get(renderer)
+             },
++            effect_map,
+             offset: state.offset,
+             passes: state.passes,
+             region: region
+@@ -895,6 +910,7 @@ where
+             })
+             .flat_map(|rect| damage.iter().flat_map(move |r| r.intersection(rect)))
+             .collect::<Vec<_>>();
++        if damage.is_empty() { return Ok(()); }
+         let texture_ref = cache.and_then(|cache| cache.get::<BlurTexture<R::TextureId>>())
+             .map(|texture| texture.lock().unwrap());
+         if self.wallpaper.is_none() && texture_ref.is_none() {
+@@ -928,48 +944,50 @@ where
+             } else {
+                 None
+             };
+-            let previous_binding = if let Some(sharp) = sharp.as_ref() {
++            let map = self.effect_map.as_ref().and_then(|(effect, kind, key)| {
++                let key = key.as_ref()?;
++                let gles = BorrowMut::<GlesFrame>::borrow_mut(<R as AsGlowRenderer>::glow_frame_mut(frame));
++                forge_effect_map::get(gles, key, effect, *kind, &self.uniforms)
++            });
++            let mut uniforms = self.uniforms.clone();
++            if self.effect_map.is_some() {
++                uniforms.push(Uniform::new("forge_effect_map_tex", 2_i32));
++                uniforms.push(Uniform::new("forge_effect_map_shade", 3_i32));
++                uniforms.push(Uniform::new("forge_effect_map_enabled", if map.is_some() { 1.0_f32 } else { 0.0_f32 }));
++            }
++            let textures = [sharp.as_ref(), map.as_ref().map(|(water, _)| water), map.as_ref().and_then(|(_, shade)| shade.as_ref())];
++            let previous_binding = if textures.iter().any(Option::is_some) {
+                 Some(
+-                    BorrowMut::<GlesFrame>::borrow_mut(<R as AsGlowRenderer>::glow_frame_mut(
+-                        frame,
+-                    ))
+-                    .with_context(|gl| unsafe {
+-                        let mut active = 0;
+-                        let mut binding = 0;
+-                        gl.GetIntegerv(ffi::ACTIVE_TEXTURE, &mut active);
+-                        gl.ActiveTexture(ffi::TEXTURE1);
+-                        gl.GetIntegerv(ffi::TEXTURE_BINDING_2D, &mut binding);
+-                        gl.BindTexture(ffi::TEXTURE_2D, sharp.tex_id());
+-                        gl.TexParameteri(
+-                            ffi::TEXTURE_2D,
+-                            ffi::TEXTURE_MIN_FILTER,
+-                            ffi::LINEAR as i32,
+-                        );
+-                        gl.TexParameteri(
+-                            ffi::TEXTURE_2D,
+-                            ffi::TEXTURE_MAG_FILTER,
+-                            ffi::LINEAR as i32,
+-                        );
+-                        gl.TexParameteri(
+-                            ffi::TEXTURE_2D,
+-                            ffi::TEXTURE_WRAP_S,
+-                            ffi::CLAMP_TO_EDGE as i32,
+-                        );
+-                        gl.TexParameteri(
+-                            ffi::TEXTURE_2D,
+-                            ffi::TEXTURE_WRAP_T,
+-                            ffi::CLAMP_TO_EDGE as i32,
+-                        );
+-                        gl.ActiveTexture(active as u32);
+-                        (active, binding)
+-                    })
+-                    .map_err(R::from_gles_error)?,
++                    BorrowMut::<GlesFrame>::borrow_mut(<R as AsGlowRenderer>::glow_frame_mut(frame))
++                        .with_context(|gl| unsafe {
++                            let mut active = 0;
++                            gl.GetIntegerv(ffi::ACTIVE_TEXTURE, &mut active);
++                            let bindings = std::array::from_fn::<_, 3, _>(|i| {
++                                let texture = textures[i]?;
++                                gl.ActiveTexture(ffi::TEXTURE1 + i as u32);
++                                let mut binding = 0;
++                                gl.GetIntegerv(ffi::TEXTURE_BINDING_2D, &mut binding);
++                                gl.BindTexture(ffi::TEXTURE_2D, texture.tex_id());
++                                if i == 0 {
++                                    for name in [ffi::TEXTURE_MIN_FILTER, ffi::TEXTURE_MAG_FILTER] {
++                                        gl.TexParameteri(ffi::TEXTURE_2D, name, ffi::LINEAR as i32);
++                                    }
++                                    for name in [ffi::TEXTURE_WRAP_S, ffi::TEXTURE_WRAP_T] {
++                                        gl.TexParameteri(ffi::TEXTURE_2D, name, ffi::CLAMP_TO_EDGE as i32);
++                                    }
++                                }
++                                Some(binding as u32)
++                            });
++                            gl.ActiveTexture(active as u32);
++                            (active, bindings)
++                        })
++                        .map_err(R::from_gles_error)?,
+                 )
+             } else {
+                 None
+             };
+             BorrowMut::<GlesFrame>::borrow_mut(<R as AsGlowRenderer>::glow_frame_mut(frame))
+-                .override_default_tex_program(self.render_shader.clone(), self.uniforms.clone());
++                .override_default_tex_program(self.render_shader.clone(), uniforms);
+             let result = frame.render_texture_from_to(
+                 tex,
+                 src,
+@@ -981,11 +999,15 @@ where
+             );
+             BorrowMut::<GlesFrame>::borrow_mut(<R as AsGlowRenderer>::glow_frame_mut(frame))
+                 .clear_tex_program_override();
+-            if let Some((active, binding)) = previous_binding {
++            if let Some((active, bindings)) = previous_binding {
+                 BorrowMut::<GlesFrame>::borrow_mut(<R as AsGlowRenderer>::glow_frame_mut(frame))
+                     .with_context(|gl| unsafe {
+-                        gl.ActiveTexture(ffi::TEXTURE1);
+-                        gl.BindTexture(ffi::TEXTURE_2D, binding as u32);
++                        for (i, binding) in bindings.into_iter().enumerate() {
++                            if let Some(binding) = binding {
++                                gl.ActiveTexture(ffi::TEXTURE1 + i as u32);
++                                gl.BindTexture(ffi::TEXTURE_2D, binding);
++                            }
++                        }
+                         gl.ActiveTexture(active as u32);
+                     })
+                     .map_err(R::from_gles_error)?;
+diff --git a/src/backend/render/wayland/mod.rs b/src/backend/render/wayland/mod.rs
+index 313f236..4437d6b 100644
+--- a/src/backend/render/wayland/mod.rs
++++ b/src/backend/render/wayland/mod.rs
+@@ -19,6 +19,7 @@ use crate::backend::render::{
+ pub mod blur_effect;
+ pub(crate) mod forge_animation;
+ pub(crate) mod forge_backdrop;
++mod forge_effect_map;
+ pub(crate) mod forge_surface_state;
+ pub(crate) mod forge_loader;
+ mod forge_runtime;

@@ -1,0 +1,150 @@
+--- a/src/backend/render/wayland/blur_effect.rs
++++ b/src/backend/render/wayland/blur_effect.rs
+@@ -280,6 +280,7 @@
+     pub commit: CommitCounter,
+     runtime_revision: u64,
+     age: forge_animation::Age,
++    focus_clock: Option<forge_animation::FocusClock>,
+     output_size: [f32; 2],
+     surface_position: [f32; 2],
+     window_active: bool,
+@@ -314,6 +315,7 @@
+             commit: CommitCounter::default(),
+             runtime_revision: 0,
+             age: forge_animation::Age::default(),
++            focus_clock: None,
+             output_size: [0.0; 2],
+             surface_position: [0.0; 2],
+             window_active: true,
+@@ -351,6 +353,7 @@
+     passes: usize,
+     uniforms: Vec<Uniform<'static>>,
+     needs_sharp: bool,
++    animation_sample: Option<std::time::Instant>,
+     local_backdrop_damage: bool,
+     rain_backdrop_margin: Option<Size<i32, Physical>>,
+     wallpaper: Option<forge_backdrop::Image>,
+@@ -425,7 +428,8 @@
+         radii: [u8; 4],
+         strength: usize,
+     ) -> Result<Option<Self>, R::Error> {
+-        let (runtime_revision, runtime, animation_clock, animation_activity) = forge_loader::current();
++        let (runtime_revision, runtime, animation_clock, animation_activity, focus_only) =
++            forge_loader::current();
+         let is_dark = forge_surface_state::dark();
+         let output_size = forge_animation::output_size();
+         let window_geometry = geometry;
+@@ -620,29 +624,46 @@
+             }
+         }
+         let wallpaper_revision = wallpaper.as_ref().map(|image| image.revision);
++        let mut focus_sample = None;
+         let mut animation_changed = false;
+         if runtime_program.is_some() {
+             if let Some(runtime) = &runtime {
+                 uniforms.extend(runtime.parameters.iter().map(|p| Uniform::new(p.name.clone(), p.value)));
+-                uniforms.extend(forge_animation::uniforms(&state.id, runtime.animated, window_position));
++                let focus_only = focus_only && runtime.animated;
++                if focus_only {
++                    focus_sample = Some(forge_animation::FocusClock::sample(
++                        &mut state.focus_clock, &runtime.id, window_active, animation_clock,
++                    ));
++                } else {
++                    state.focus_clock = None;
++                }
++                uniforms.extend(forge_animation::uniforms(
++                    &state.id, runtime.animated, window_position, focus_sample,
++                ));
+                 if let Some(clock) = animation_clock {
+-                    uniforms.push(clock.uniform(runtime.animated));
++                    uniforms.push(clock.uniform(runtime.animated, focus_sample));
+                 }
+                 uniforms.push(Uniform::new("output_size", output_size));
+                 uniforms.push(Uniform::new("surface_position", window_position));
+-                let age = state.age.seconds(&runtime.id, forge_animation::sample_time());
+-                let running = animation_activity.needs_frame(age);
++                let sample = focus_sample.map_or_else(forge_animation::sample_time, |sample| sample.time);
++                let age = state.age.seconds(&runtime.id, sample);
++                let can_animate = !focus_only || window_active;
++                let running = can_animate && animation_activity.needs_frame(age);
+                 if running {
+                     forge_animation::track(&state.id);
+                 }
+                 // A capped animation may finish at a different time on each output.
+-                animation_changed = forge_animation::animation_step()
+-                    && (running || forge_animation::previous_sample_time()
++                animation_changed = can_animate && forge_animation::animation_step()
++                    && (running || focus_sample.map_or_else(forge_animation::previous_sample_time, |sample| sample.previous)
+                         .is_some_and(|previous| animation_activity.needs_frame(state.age.elapsed(previous))));
+                 uniforms.push(Uniform::new("window_age", if runtime.animated { age } else { 0.0 }));
+                 uniforms.extend([Uniform::new("window_active", if window_active { 1.0_f32 } else { 0.0_f32 }),
+                                  Uniform::new("is_dark", if is_dark { 1.0_f32 } else { 0.0_f32 })]);
+             }
++        }
++
++        if runtime_program.is_none() {
++            state.focus_clock = None;
+         }
+ 
+         // Keep the marker in the same stack position between ticks so the
+@@ -730,6 +751,9 @@
+                     logical_size: [(window_geometry.size.w as f32).to_bits(), (window_geometry.size.h as f32).to_bits()],
+                     scale: (output_scale as f32).to_bits(),
+                     accent: theme_accent.map(f32::to_bits),
++                    surface: focus_sample
++                        .filter(|sample| !window_active || sample.time != forge_animation::sample_time())
++                        .map(|_| state.id.clone()),
+                 });
+             Some((effect, kind, key))
+         });
+@@ -768,6 +792,7 @@
+                 .collect(),
+             uniforms,
+             needs_sharp,
++            animation_sample: focus_sample.map(|sample| sample.time),
+             local_backdrop_damage: !custom_glass,
+             rain_backdrop_margin,
+             wallpaper,
+@@ -1096,10 +1121,11 @@
+             } else {
+                 None
+             };
++            let animation_sample = self.animation_sample.unwrap_or_else(forge_animation::sample_time);
+             let map = self.effect_map.as_ref().and_then(|(effect, kind, key)| {
+                 let key = key.as_ref()?;
+                 let gles = BorrowMut::<GlesFrame>::borrow_mut(<R as AsGlowRenderer>::glow_frame_mut(frame));
+-                forge_effect_map::get(gles, key, effect, *kind, &self.uniforms)
++                forge_effect_map::get(gles, key, effect, *kind, &self.uniforms, animation_sample)
+             });
+             let mut uniforms = self.uniforms.clone();
+             if self.effect_map.is_some() {
+@@ -1115,14 +1141,17 @@
+                 }
+                 let changed = cache.and_then(|data| data.get::<Mutex<forge_effect_map::BackdropMotion>>())
+                     .is_some_and(|activity| activity.lock().unwrap().take());
+-                if !changed && !forge_effect_map::field_is_current() {
++                if !changed && !forge_effect_map::field_is_current(animation_sample) {
+                     return None;
+                 }
+                 let (atlas, _) = map.as_ref()?;
+                 let gles = BorrowMut::<GlesFrame>::borrow_mut(<R as AsGlowRenderer>::glow_frame_mut(frame));
+                 let context = gles.renderer().as_ref().context_id();
+                 let source = R::tex_to_gl(&context, tex)?;
+-                forge_effect_map::rain_field(gles, key.as_ref()?, programs, &source, src, dst, atlas, &uniforms, changed)
++                forge_effect_map::rain_field(
++                    gles, key.as_ref()?, programs, &source, src, dst, atlas, &uniforms, changed,
++                    animation_sample,
++                )
+             })();
+             if let Some((field, _)) = rain.as_ref() {
+                 let size = field.size();
+--- a/src/config/mod.rs
++++ b/src/config/mod.rs
+@@ -865,6 +865,7 @@
+             "forge_runtime"
+             | "forge_animation_fps"
+             | "forge_animation_fps_low"
++            | "forge_animation_focus_only"
+             | "forge_backdrop"
+             | "glass_effect"
+             | "aero_blur_amount"

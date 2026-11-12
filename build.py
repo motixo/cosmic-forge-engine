@@ -10,18 +10,16 @@ import subprocess
 import tempfile
 
 from recovery import progress
+from prepare_smithay import prepare_smithay
 
 ROOT = Path(__file__).resolve().parent
 
 
-def prepare(source, version, local=None):
+def prepare(source, version, local=None, offline=False):
     release = json.loads((ROOT / 'release.json').read_text())
     pin = release['sources'][version]
-    patches = [ROOT / 'patches/glass.patch', ROOT / 'patches/runtime.patch',
-               ROOT / 'patches/generic.patch', ROOT / 'patches/animation.patch', ROOT / 'patches/backdrop.patch',
-               ROOT / 'patches/window-age.patch', ROOT / 'patches/output-size.patch',
-               ROOT / 'patches/animation-damage.patch']
-    files = patches + [ROOT / name for name in ['runtime.rs', 'loader.rs', 'animation.rs', 'backdrop.rs', 'surface_state.rs', 'glass.frag']]
+    patches = [ROOT / name for name in release['bundle_files'] if name.startswith('patches/')]
+    files = patches + [ROOT / 'smithay-damage.patch', ROOT / 'prepare_smithay.py'] + [ROOT / name for name in ['runtime.rs', 'loader.rs', 'animation.rs', 'effect_map.rs', 'backdrop.rs', 'surface_state.rs', 'glass.frag']]
     binary_version = pin + '-forge-r' + str(release['renderer_revision'])
     expected = {'commit': pin, 'binary_version': binary_version, 'sha256': {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in files}}
     marker = source / '.forge-source.json'
@@ -42,8 +40,9 @@ def prepare(source, version, local=None):
     for patch in patches:
         subprocess.run(['git', 'apply', '--check', str(patch)], cwd=source, check=True)
         subprocess.run(['git', 'apply', str(patch)], cwd=source, check=True)
+    prepare_smithay(source, offline)
     destination = source / 'src/backend/render/wayland'
-    for name in ['runtime', 'loader', 'animation', 'backdrop', 'surface_state']:
+    for name in ['runtime', 'loader', 'animation', 'effect_map', 'backdrop', 'surface_state']:
         shutil.copy2(ROOT / (name + '.rs'), destination / ('forge_' + name + '.rs'))
     shutil.copy2(ROOT / 'glass.frag', destination.parent / 'shaders/forge_glass.frag')
     (source / 'build.rs').write_text(f'fn main() {{ println!("cargo:rustc-env=GIT_HASH={binary_version}"); }}\n')
@@ -64,7 +63,7 @@ def main():
         parser.error('--jobs must be positive')
     work = (args.work_dir or ROOT / 'build/engine-sources' / args.cosmic_version).resolve()
     progress('preparing')
-    prepare(work, args.cosmic_version, args.source)
+    prepare(work, args.cosmic_version, args.source, args.offline)
     if args.prepare_only:
         return
     target = (args.target_dir or ROOT / 'build/engine-target' / args.cosmic_version).resolve()

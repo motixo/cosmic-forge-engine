@@ -1,0 +1,53 @@
+diff --git a/src/backend/render/wayland/blur_effect.rs b/src/backend/render/wayland/blur_effect.rs
+--- a/src/backend/render/wayland/blur_effect.rs
++++ b/src/backend/render/wayland/blur_effect.rs
+@@ -863,11 +863,11 @@
+         let target = sharp.as_mut().unwrap_or(&mut texture);
+         let sync = blit_from_active_fb(gles_frame, src, dst, transform, target)
+             .map_err(R::from_gles_error)?;
+-        gles_frame.wait(&sync).map_err(R::from_gles_error)?;
++        let mut renderer = gles_frame.renderer();
++        renderer.as_mut().wait(&sync).map_err(R::from_gles_error)?;
+         if self.passes == 0 {
+             return Ok(());
+         }
+-        let mut renderer = gles_frame.renderer();
+         let mut off_texture = renderer
+             .as_mut()
+             .create_buffer(Fourcc::Abgr8888, tex_size)
+@@ -1057,7 +1057,7 @@
+             .create_buffer(Fourcc::Abgr8888, dst_buffer.size)?;
+         let mut fb_tmp = renderer.as_mut().bind(&mut tmp_texture)?;
+         std::mem::drop(renderer);
+-        frame.wait(&sync)?;
++        frame.renderer().as_mut().wait(&sync)?;
+ 
+         let sync = frame.blit_to(
+             &mut fb_tmp,
+@@ -1065,7 +1065,7 @@
+             Rectangle::from_size(dst_phys.size),
+             TextureFilter::Linear,
+         )?;
+-        frame.wait(&sync)?;
++        frame.renderer().as_mut().wait(&sync)?;
+         std::mem::drop(fb_tmp);
+ 
+         // now we bind the target texture with `Transform::Normal`
+@@ -1075,7 +1075,7 @@
+         let mut frame = renderer
+             .as_mut()
+             .render(&mut fb, tex_size_phys, Transform::Normal)?;
+-        frame.wait(&sync)?;
++        frame.renderer().as_mut().wait(&sync)?;
+         Frame::render_texture_from_to(
+             &mut frame,
+             &tmp_texture,
+@@ -1092,7 +1092,7 @@
+         frame.finish()
+     } else {
+         std::mem::drop(renderer);
+-        frame.wait(&sync)?;
++        frame.renderer().as_mut().wait(&sync)?;
+         frame.blit_to(
+             &mut fb,
+             dst,

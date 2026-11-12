@@ -1,0 +1,174 @@
+diff --git a/src/backend/render/wayland/blur_effect.rs b/src/backend/render/wayland/blur_effect.rs
+--- a/src/backend/render/wayland/blur_effect.rs
++++ b/src/backend/render/wayland/blur_effect.rs
+@@ -12,7 +12,7 @@
+     backend::{
+         allocator::Fourcc,
+         renderer::{
+-            damage::FramebufferDamage,
++            damage::{FramebufferDamage, FramebufferEffectDamage},
+             Bind, BlitFrame, Color32F, ContextId, Frame, FrameContext, ImportAll, Offscreen,
+             Renderer, Texture, TextureFilter,
+             element::{Element, Id, Kind, RenderElement},
+@@ -350,6 +350,8 @@
+     passes: usize,
+     uniforms: Vec<Uniform<'static>>,
+     needs_sharp: bool,
++    local_backdrop_damage: bool,
++    rain_backdrop_margin: Option<Size<i32, Physical>>,
+     wallpaper: Option<forge_backdrop::Image>,
+     sample_origin: Point<f64, Buffer>,
+ }
+@@ -582,6 +584,20 @@
+         }
+ 
+         let (runtime_program, rain_field) = runtime.as_ref().map(|effect| forge_loader::program(renderer, effect)).unwrap_or_default();
++        let rain_backdrop_margin = runtime.as_ref().filter(|effect| {
++            generic && runtime_program.is_some() && rain_field.is_none()
++                && effect.id == "rain-glass"
++                && effect.source.starts_with("// forge-effect-map: rain-runoff-v1\n")
++        }).map(|effect| {
++            let size = effect.parameters.iter().find(|parameter| parameter.name == "forge_rain_size")
++                .map_or(26.0, |parameter| f64::from(parameter.value).clamp(4.0, 26.0));
++            let texture = src.to_i32_round::<i32>();
++            let [x, y] = rain_refraction_bound(size);
++            Size::from((
++                (x * f64::from(texture.w) / geometry.size.w).ceil() as i32 + 1,
++                (y * f64::from(texture.h) / geometry.size.h).ceil() as i32 + 1,
++            ))
++        });
+         let wallpaper = if forge_backdrop::selected() == Backdrop::Wallpaper {
+             forge_backdrop::current(renderer, params.offset, params.passes)?
+         } else { None };
+@@ -748,6 +764,8 @@
+                 .collect(),
+             uniforms,
+             needs_sharp,
++            local_backdrop_damage: !custom_glass,
++            rain_backdrop_margin,
+             wallpaper,
+             sample_origin: (geometry.loc.x * output_scale, geometry.loc.y * output_scale).into(),
+         }))
+@@ -820,6 +838,9 @@
+         cache: &UserDataMap,
+     ) -> Result<(), <R>::Error> {
+         if self.wallpaper.is_some() { return Ok(()); }
++        if let Some(damage) = cache.get::<FramebufferEffectDamage>() {
++            damage.clear();
++        }
+         trace!(?dst, passes = self.passes, "Capturing scene backdrop");
+         let transform = frame.transformation();
+         let tex_size = self.src.to_i32_round();
+@@ -896,8 +917,9 @@
+             None
+         };
+ 
++        let reusable = keep_original || self.passes == 0 && self.rain_backdrop_margin.is_some();
+         let partial = hint.and_then(|rect| {
+-            if !keep_original || pyramid.scene != Some(scene)
++            if !reusable || pyramid.scene != Some(scene)
+                 || dst.size.w != scene.source.size.w || dst.size.h != scene.source.size.h
+                 || src != scene.source.to_f64()
+                 || i64::from(rect.size.w) * i64::from(rect.size.h) * 2
+@@ -935,24 +957,63 @@
+                     .lock().unwrap().capture(hint.is_some());
+             }
+         };
+-        if self.passes == 0 {
+-            note_capture();
+-            return Ok(());
+-        }
+-        render_blur(
+-            renderer.as_mut(),
+-            &self.scaling_shaders,
+-            &mut texture,
+-            sharp.as_ref(),
+-            &mut pyramid,
+-            self.offset,
+-            self.passes,
+-            keep_original,
+-            dirty,
+-        )
+-        .map_err(R::from_gles_error)?;
+-        if keep_original {
++        if self.passes > 0 {
++            render_blur(
++                renderer.as_mut(),
++                &self.scaling_shaders,
++                &mut texture,
++                sharp.as_ref(),
++                &mut pyramid,
++                self.offset,
++                self.passes,
++                keep_original,
++                dirty,
++            )
++            .map_err(R::from_gles_error)?;
++        }
++        if reusable {
+             pyramid.scene = Some(scene);
++        }
++        let margin = if self.local_backdrop_damage {
++            Some(Size::from((1, 1)))
++        } else {
++            self.rain_backdrop_margin
++        };
++        if let Some(margin) = margin
++            && matches!(transform, Transform::Normal | Transform::Flipped180)
++            && src == scene.source.to_f64()
++            && dst.size.w == scene.source.size.w
++            && dst.size.h == scene.source.size.h
++        {
++            let offset = self.offset;
++            let passes = self.passes;
++            let origin = Point::<i32, Buffer>::new(
++                scene.source.loc.x - dst.loc.x,
++                scene.source.loc.y - dst.loc.y,
++            );
++            cache.get_or_insert_threadsafe(FramebufferEffectDamage::default).set(self.commit, dst, move |rect| {
++                let mut changed = Rectangle::new(
++                    Point::from((rect.loc.x + origin.x, rect.loc.y + origin.y)),
++                    Size::from((rect.size.w, rect.size.h)),
++                );
++                let border = offset.ceil() as i32 + 2;
++                let end = changed.loc + changed.size;
++                if changed.loc.x < border || changed.loc.y < border
++                    || end.x > tex_size.w - border || end.y > tex_size.h - border
++                {
++                    return None;
++                }
++                for level in 1..=passes {
++                    changed = pass_damage(changed, tex_size, level - 1, level, offset);
++                }
++                for level in (1..=passes).rev() {
++                    changed = pass_damage(changed, tex_size, level, level - 1, offset);
++                }
++                Some(Rectangle::new(
++                    Point::from((changed.loc.x - origin.x - margin.w, changed.loc.y - origin.y - margin.h)),
++                    Size::from((changed.size.w + 2 * margin.w, changed.size.h + 2 * margin.h)),
++                ))
++            });
+         }
+         note_capture();
+         if let Some(dirty) = dirty {
+@@ -1291,6 +1352,20 @@
+     Ok(texture)
+ }
+ 
++// The runoff-v1 optics are expressed in logical pixels. Keep this bound in sync with the shader.
++// A runoff lane has |dx| <= 23. Its two lenses contribute <= 2 * 2.46 * 23
++// per unit coverage, and its film contributes <= (0.72 / 0.64) * 23.
++// In Y, the two unmerged head tests bound the contribution by 6.68 * size + 6.40.
++// In a merger, the larger signed lens distance is at most aa + 1.25 * neck;
++// neck <= 0.625 * min(rx), ry <= 1.147 * size, rx <= 1.185 * size, and ry/min(rx,ry) <= 5.
++// With contour <= 1.4 and lens strength <= 2.46, this gives 7.15 * size + 11.20.
++// The outer join interpolates toward each contribution per unit of its coverage,
++// so it preserves the largest bound. Beads and drainage have smaller bounds.
++// Round up and include the half-pixel UV inset and floating-point slack.
++fn rain_refraction_bound(size: f64) -> [f64; 2] {
++    [144.0, 8.0 * size + 16.0]
++}
++
+ fn pass_damage(
+     damage: Rectangle<i32, Buffer>,
+     full: Size<i32, Buffer>,

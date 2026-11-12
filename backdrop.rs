@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 use super::{
-    blur_effect::{BlurShaders, render_blur},
+    blur_effect::{BlurPyramid, BlurShaders, render_blur},
     forge_loader,
     forge_runtime::Backdrop,
 };
@@ -9,7 +9,7 @@ use smithay::{
     backend::{
         allocator::Fourcc,
         renderer::{
-            Bind, Color32F, Frame, Offscreen, Renderer, Texture,
+            Color32F, Frame, Offscreen, Texture,
             element::{
                 Element, Id, Kind,
                 surface::{WaylandSurfaceRenderElement, render_elements_from_surface_tree},
@@ -235,42 +235,19 @@ pub fn current<R: AsGlowRenderer>(
         }
     }
     let size = wallpaper.sharp.size();
-    let area = Rectangle::from_size(size.to_logical(1, Transform::Normal).to_physical(1));
     let mut blurred = gles
         .create_buffer(Fourcc::Abgr8888, size)
         .map_err(R::from_gles_error)?;
-    let mut scratch = gles
-        .create_buffer(Fourcc::Abgr8888, size)
-        .map_err(R::from_gles_error)?;
-    let mut fb = gles.bind(&mut blurred).map_err(R::from_gles_error)?;
-    let mut frame = gles
-        .render(&mut fb, area.size, Transform::Normal)
-        .map_err(R::from_gles_error)?;
-    frame
-        .clear(Color32F::TRANSPARENT, &[area])
-        .map_err(R::from_gles_error)?;
-    frame
-        .render_texture_from_to(
-            &wallpaper.sharp,
-            Rectangle::from_size(size.to_f64()),
-            area,
-            &[area],
-            &[],
-            Transform::Normal,
-            1.0,
-            None,
-            &[],
-        )
-        .map_err(R::from_gles_error)?;
-    let sync = frame.finish().map_err(R::from_gles_error)?;
-    drop(fb);
-    gles.wait(&sync).map_err(R::from_gles_error)?;
     render_blur(
         gles,
         &shaders,
-        &mut [&mut blurred, &mut scratch],
+        &mut blurred,
+        Some(&wallpaper.sharp),
+        &mut BlurPyramid::default(),
         offset,
         passes,
+        false,
+        None,
     )
     .map_err(R::from_gles_error)?;
     clamp(gles, &blurred).map_err(R::from_gles_error)?;
@@ -290,7 +267,7 @@ mod tests {
     use smithay::{
         backend::{
             egl::{EGLContext, EGLDisplay, native::EGLSurfacelessDisplay},
-            renderer::{ExportMem, glow::GlowRenderer},
+            renderer::{Bind, ExportMem, Renderer, glow::GlowRenderer},
         },
         output::{Mode, PhysicalProperties, Scale, Subpixel},
     };

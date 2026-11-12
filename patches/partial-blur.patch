@@ -1,0 +1,448 @@
+diff --git a/src/backend/render/wayland/blur_effect.rs b/src/backend/render/wayland/blur_effect.rs
+--- a/src/backend/render/wayland/blur_effect.rs
++++ b/src/backend/render/wayland/blur_effect.rs
+@@ -12,6 +12,7 @@
+     backend::{
+         allocator::Fourcc,
+         renderer::{
++            damage::FramebufferDamage,
+             Bind, BlitFrame, Color32F, ContextId, Frame, FrameContext, ImportAll, Offscreen,
+             Renderer, Texture, TextureFilter,
+             element::{Element, Id, Kind, RenderElement},
+@@ -238,6 +239,26 @@
+ 
+ type BlurTexture<T> = Mutex<Option<T>>;
+ 
++#[derive(Default)]
++pub(crate) struct BlurPyramid {
++    context: Option<ContextId<GlesTexture>>,
++    size: Option<Size<i32, Buffer>>,
++    levels: Vec<GlesTexture>,
++    upsampled: Vec<GlesTexture>,
++    scene: Option<SceneCapture>,
++}
++
++#[derive(Clone, Copy, PartialEq, Eq)]
++struct SceneCapture {
++    context: usize,
++    geometry: Rectangle<i32, Physical>,
++    source: Rectangle<i32, Buffer>,
++    transform: Transform,
++    offset: u64,
++    passes: usize,
++}
++
++
+ // A separate cache type keeps the original background before Kawase blur.
+ struct CrystalSharpTexture<T>(Mutex<Option<T>>);
+ 
+@@ -831,7 +852,21 @@
+         .unwrap();
+         std::mem::drop(renderer);
+ 
+-        let mut sharp = if self.needs_sharp && self.passes > 0 {
++        let hint = cache.get::<FramebufferDamage>().and_then(|damage| *damage.0.lock().unwrap());
++        let pyramid_cache = cache.get_or_insert_threadsafe(Mutex::<BlurPyramid>::default);
++        let mut pyramid = pyramid_cache.lock().unwrap();
++        let context = gles_frame.renderer().as_ref().egl_context().get_context_handle() as usize;
++        let scene = SceneCapture {
++            context,
++            geometry: dst,
++            source: src.to_i32_round(),
++            transform,
++            offset: self.offset.to_bits(),
++            passes: self.passes,
++        };
++        let keep_original = self.passes > 0
++            && (self.needs_sharp || hint.is_some() || pyramid.scene.is_some());
++        let mut sharp = if keep_original {
+             let sharp_cache =
+                 cache.get_or_insert_threadsafe(CrystalSharpTexture::<R::TextureId>::default);
+             let mut sharp_entry = sharp_cache.0.lock().unwrap();
+@@ -844,6 +879,7 @@
+                 sharp_entry.take();
+             }
+             if sharp_entry.is_none() {
++                pyramid.scene = None;
+                 let texture = renderer
+                     .as_mut()
+                     .create_buffer(Fourcc::Abgr8888, tex_size)
+@@ -858,30 +894,61 @@
+             None
+         };
+ 
+-        // The first downsample can read the original directly, so sharp glass
+-        // needs only one capture even when both textures are sampled later.
++        let partial = hint.and_then(|rect| {
++            if !keep_original || pyramid.scene != Some(scene)
++                || dst.size.w != scene.source.size.w || dst.size.h != scene.source.size.h
++                || src != scene.source.to_f64()
++                || i64::from(rect.size.w) * i64::from(rect.size.h) * 2
++                    >= i64::from(dst.size.w) * i64::from(dst.size.h)
++            {
++                return None;
++            }
++            let dirty = Rectangle::new(
++                Point::from((
++                    scene.source.loc.x + rect.loc.x - dst.loc.x,
++                    scene.source.loc.y + rect.loc.y - dst.loc.y,
++                )),
++                Size::from((rect.size.w, rect.size.h)),
++            );
++            // A tap can wrap at the full-size input edge. Refresh the full blur there.
++            let border = self.offset.ceil() as i32 + 2;
++            let end = dirty.loc + dirty.size;
++            (dirty.loc.x >= border && dirty.loc.y >= border
++                && end.x <= tex_size.w - border && end.y <= tex_size.h - border)
++                .then_some((dirty, rect))
++        });
++        let dirty = partial.map(|(dirty, _)| dirty);
++
++        // Invalidate before touching a cache that could be left incomplete by a render error.
++        pyramid.scene = None;
+         let target = sharp.as_mut().unwrap_or(&mut texture);
+-        let sync = blit_from_active_fb(gles_frame, src, dst, transform, target)
++        let (capture_src, capture_dst) = partial.map_or((src, dst), |(dirty, rect)| (dirty.to_f64(), rect));
++        let sync = blit_from_active_fb(gles_frame, capture_src, capture_dst, transform, target, dirty.is_none())
+             .map_err(R::from_gles_error)?;
+         let mut renderer = gles_frame.renderer();
+         renderer.as_mut().wait(&sync).map_err(R::from_gles_error)?;
+         if self.passes == 0 {
+             return Ok(());
+         }
+-        let mut off_texture = renderer
+-            .as_mut()
+-            .create_buffer(Fourcc::Abgr8888, tex_size)
+-            .map_err(R::from_gles_error)?;
+-        let mut textures = [&mut texture, &mut off_texture];
+         render_blur(
+             renderer.as_mut(),
+             &self.scaling_shaders,
+-            &mut textures,
++            &mut texture,
+             sharp.as_ref(),
++            &mut pyramid,
+             self.offset,
+             self.passes,
++            keep_original,
++            dirty,
+         )
+         .map_err(R::from_gles_error)?;
++        if keep_original {
++            pyramid.scene = Some(scene);
++        }
++        if let Some(dirty) = dirty {
++            static FIRST_PARTIAL: std::sync::Once = std::sync::Once::new();
++            FIRST_PARTIAL.call_once(|| tracing::info!(?dirty, "Updated damaged blur region"));
++        }
+         Ok(())
+     }
+ 
+@@ -1024,6 +1091,7 @@
+     dst: Rectangle<i32, Physical>,
+     transform: Transform,
+     to_texture: &mut GlesTexture,
++    clear_target: bool,
+ ) -> Result<SyncPoint, GlesError> {
+     let tex_size = to_texture.size();
+     let tex_size_phys = tex_size.to_logical(1, Transform::Normal).to_physical(1);
+@@ -1031,7 +1099,7 @@
+ 
+     let mut renderer = frame.renderer();
+     let mut fb = renderer.as_mut().bind(to_texture)?;
+-    let sync = {
++    let sync = if clear_target {
+         let mut subframe = renderer
+             .as_mut()
+             .render(&mut fb, tex_size_phys, Transform::Normal)?;
+@@ -1040,6 +1108,8 @@
+             &[Rectangle::from_size(tex_size_phys)],
+         )?;
+         subframe.finish()?
++    } else {
++        SyncPoint::signaled()
+     };
+ 
+     if transform != Transform::Normal {
+@@ -1104,142 +1174,151 @@
+     }
+ }
+ 
++#[allow(clippy::too_many_arguments)]
+ pub(crate) fn render_blur(
+     renderer: &mut GlesRenderer,
+     shaders: &BlurShaders,
+-    textures: &mut [&mut GlesTexture; 2],
++    output: &mut GlesTexture,
+     original: Option<&GlesTexture>,
++    pyramid: &mut BlurPyramid,
+     offset: f64,
+     passes: usize,
++    preserve_levels: bool,
++    dirty: Option<Rectangle<i32, Buffer>>,
+ ) -> Result<(), GlesError> {
+-    for i in 0..passes {
+-        let tex_size = textures[0].size();
+-        let [src_tex, target_tex] = textures;
+-        let mut fb = renderer.bind(*target_tex)?;
+-
+-        let adjusted_tex_size = tex_size.downscale(1 << i);
+-        let target_tex_size = tex_size
+-            .downscale(1 << (i + 1))
+-            .to_logical(1, Transform::Normal)
+-            .to_physical(1);
+-        let half_pixel = [
+-            0.5 / (adjusted_tex_size.w as f32),
+-            0.5 / (adjusted_tex_size.h as f32),
+-        ];
+-
+-        let mut frame = renderer.render(
+-            &mut fb,
+-            tex_size.to_logical(1, Transform::Normal).to_physical(1),
+-            Transform::Normal,
+-        )?;
+-        frame.clear(
+-            Color32F::new(0., 0., 0., 0.),
+-            &[Rectangle::from_size(
+-                tex_size.to_logical(1, Transform::Normal).to_physical(1),
+-            )],
+-        )?;
+-        frame.with_context(|gl| unsafe {
+-            gl.TexParameteri(
+-                ffi::TEXTURE_2D,
+-                ffi::TEXTURE_WRAP_S,
+-                ffi::CLAMP_TO_EDGE as i32,
+-            );
+-            gl.TexParameteri(
+-                ffi::TEXTURE_2D,
+-                ffi::TEXTURE_WRAP_T,
+-                ffi::CLAMP_TO_EDGE as i32,
+-            );
+-        })?;
+-        let source = if i == 0 { original.unwrap_or(src_tex) } else { src_tex };
+-        frame.render_texture_from_to(
+-            source,
+-            Rectangle::from_size(adjusted_tex_size.to_f64()),
+-            Rectangle::from_size(target_tex_size),
+-            &[Rectangle::from_size(target_tex_size)],
+-            &[Rectangle::from_size(target_tex_size)],
+-            Transform::Normal,
+-            1.0,
+-            Some(&shaders.down),
+-            &[
+-                Uniform::new("half_pixel", half_pixel),
+-                Uniform::new("offset", (offset / (1 << i) as f64) as f32),
+-            ],
+-        )?;
+-        frame.with_context(|gl| unsafe {
+-            gl.TexParameteri(ffi::TEXTURE_2D, ffi::TEXTURE_WRAP_S, ffi::REPEAT as i32);
+-            gl.TexParameteri(ffi::TEXTURE_2D, ffi::TEXTURE_WRAP_T, ffi::REPEAT as i32);
+-        })?;
+-        let sync = frame.finish()?;
+-        std::mem::drop(fb);
+-        renderer.wait(&sync)?;
+-
+-        textures.swap(0, 1);
+-    }
+-
+-    for i in 0..passes {
+-        let tex_size = textures[0].size();
+-        let [src_tex, target_tex] = textures;
+-        let mut fb = renderer.bind(*target_tex)?;
+-
+-        let adjusted_tex_size = tex_size.downscale(1 << (passes - i));
+-        let target_tex_size = tex_size
+-            .downscale(1 << (passes - i - 1))
+-            .to_logical(1, Transform::Normal)
+-            .to_physical(1);
+-        let half_pixel = [
+-            0.5 / (adjusted_tex_size.w as f32),
+-            0.5 / (adjusted_tex_size.h as f32),
+-        ];
+-
+-        let mut frame = renderer.render(
+-            &mut fb,
+-            tex_size.to_logical(1, Transform::Normal).to_physical(1),
+-            Transform::Normal,
+-        )?;
+-        frame.clear(
+-            Color32F::new(0., 0., 0., 0.),
+-            &[Rectangle::from_size(
+-                tex_size.to_logical(1, Transform::Normal).to_physical(1),
+-            )],
+-        )?;
+-        frame.with_context(|gl| unsafe {
+-            gl.TexParameteri(
+-                ffi::TEXTURE_2D,
+-                ffi::TEXTURE_WRAP_S,
+-                ffi::CLAMP_TO_EDGE as i32,
+-            );
+-            gl.TexParameteri(
+-                ffi::TEXTURE_2D,
+-                ffi::TEXTURE_WRAP_T,
+-                ffi::CLAMP_TO_EDGE as i32,
+-            );
+-        })?;
+-        frame.render_texture_from_to(
+-            src_tex,
+-            Rectangle::from_size(adjusted_tex_size.to_f64()),
+-            Rectangle::from_size(target_tex_size),
+-            &[Rectangle::from_size(target_tex_size)],
+-            &[Rectangle::from_size(target_tex_size)],
+-            Transform::Normal,
+-            1.0,
+-            Some(&shaders.up),
+-            &[
+-                Uniform::new("half_pixel", half_pixel),
+-                Uniform::new("offset", (offset / (1 << (passes - i)) as f64) as f32),
+-            ],
+-        )?;
+-        frame.with_context(|gl| unsafe {
+-            gl.TexParameteri(ffi::TEXTURE_2D, ffi::TEXTURE_WRAP_S, ffi::REPEAT as i32);
+-            gl.TexParameteri(ffi::TEXTURE_2D, ffi::TEXTURE_WRAP_T, ffi::REPEAT as i32);
+-        })?;
+-        let sync = frame.finish()?;
+-        std::mem::drop(fb);
+-        renderer.wait(&sync)?;
+-
+-        textures.swap(0, 1);
+-    }
+-
+-    // textures always end up the right way around with `self.texture` containing our final render,
+-    // since we render PASSES * 2 (downscale and upscale), so the number of swaps is always even.
++    let full = output.size();
++    let context = renderer.context_id();
++    if pyramid.context.as_ref() != Some(&context) || pyramid.size != Some(full) {
++        *pyramid = BlurPyramid {
++            context: Some(context),
++            size: Some(full),
++            ..Default::default()
++        };
++    }
++    while pyramid.levels.len() < passes {
++        let level = pyramid.levels.len() + 1;
++        pyramid.levels.push(blur_layer(renderer, full.downscale(1 << level))?);
++    }
++    if preserve_levels {
++        while pyramid.upsampled.len() < passes.saturating_sub(1) {
++            let level = pyramid.upsampled.len() + 1;
++            pyramid.upsampled.push(blur_layer(renderer, full.downscale(1 << level))?);
++        }
++    }
++
++    let mut damage = dirty.unwrap_or_else(|| Rectangle::from_size(full));
++    for level in 1..=passes {
++        let (previous, targets) = pyramid.levels.split_at_mut(level - 1);
++        let source = previous.last().unwrap_or_else(|| original.unwrap_or(output));
++        damage = pass_damage(damage, full, level - 1, level, offset);
++        blur_pass(renderer, &shaders.down, full, source, &mut targets[0], level - 1, level, offset, damage)?;
++    }
++    for level in (1..=passes).rev() {
++        damage = pass_damage(damage, full, level, level - 1, offset);
++        if preserve_levels {
++            let (lower, higher) = pyramid.upsampled.split_at_mut(level.saturating_sub(1));
++            let source = if level == passes { &pyramid.levels[level - 1] } else { &higher[0] };
++            let target = lower.last_mut().unwrap_or(output);
++            blur_pass(renderer, &shaders.up, full, source, target, level, level - 1, offset, damage)?;
++        } else {
++            let (targets, sources) = pyramid.levels.split_at_mut(level - 1);
++            let target = targets.last_mut().unwrap_or(output);
++            blur_pass(renderer, &shaders.up, full, &sources[0], target, level, level - 1, offset, damage)?;
++        }
++    }
+     Ok(())
+ }
++
++fn blur_layer(
++    renderer: &mut GlesRenderer,
++    content: Size<i32, Buffer>,
++) -> Result<GlesTexture, GlesError> {
++    // A transparent border preserves samples outside the old ping-pong tile.
++    let storage = Size::from((content.w + 2, content.h + 2));
++    let mut texture: GlesTexture = renderer.create_buffer(Fourcc::Abgr8888, storage)?;
++    renderer.with_context(|gl| unsafe {
++        gl.BindTexture(ffi::TEXTURE_2D, texture.tex_id());
++        for parameter in [ffi::TEXTURE_WRAP_S, ffi::TEXTURE_WRAP_T] {
++            gl.TexParameteri(ffi::TEXTURE_2D, parameter, ffi::CLAMP_TO_EDGE as i32);
++        }
++    })?;
++    let mut target = renderer.bind(&mut texture)?;
++    let area = storage.to_logical(1, Transform::Normal).to_physical(1);
++    let mut frame = renderer.render(&mut target, area, Transform::Normal)?;
++    frame.clear(Color32F::TRANSPARENT, &[Rectangle::from_size(area)])?;
++    let _sync = frame.finish()?;
++    drop(target);
++    Ok(texture)
++}
++
++fn pass_damage(
++    damage: Rectangle<i32, Buffer>,
++    full: Size<i32, Buffer>,
++    source_level: usize,
++    target_level: usize,
++    offset: f64,
++) -> Rectangle<i32, Buffer> {
++    let factor = 1 << source_level;
++    let src = full.downscale(factor);
++    let dst = full.downscale(1 << target_level);
++    let bounds = |start: i32, end: i32, source: i32, target: i32, original: i32| {
++        // Include the widest Kawase tap plus the footprint of bilinear filtering.
++        let radius = offset * f64::from(original) / (f64::from(source) * f64::from(factor)) + 2.0;
++        let scale = f64::from(target) / f64::from(source);
++        let lo = (((f64::from(start) - radius) * scale).floor() as i32).clamp(0, target);
++        let hi = (((f64::from(end) + radius) * scale).ceil() as i32).clamp(lo, target);
++        (lo, hi)
++    };
++    let (x1, x2) = bounds(damage.loc.x, damage.loc.x + damage.size.w, src.w, dst.w, full.w);
++    let (y1, y2) = bounds(damage.loc.y, damage.loc.y + damage.size.h, src.h, dst.h, full.h);
++    Rectangle::new(Point::from((x1, y1)), Size::from((x2 - x1, y2 - y1)))
++}
++
++#[allow(clippy::too_many_arguments)]
++fn blur_pass(
++    renderer: &mut GlesRenderer,
++    shader: &GlesTexProgram,
++    full: Size<i32, Buffer>,
++    source: &GlesTexture,
++    target: &mut GlesTexture,
++    source_level: usize,
++    target_level: usize,
++    offset: f64,
++    damage: Rectangle<i32, Buffer>,
++) -> Result<(), GlesError> {
++    let factor = 1 << source_level;
++    let source_area = Rectangle::new(
++        Point::from((i32::from(source_level > 0), i32::from(source_level > 0))),
++        full.downscale(factor),
++    );
++    let target_area = Rectangle::new(
++        Point::from((i32::from(target_level > 0), i32::from(target_level > 0))),
++        full.downscale(1 << target_level),
++    )
++    .to_logical(1, Transform::Normal, &Size::default())
++    .to_physical(1);
++    let storage = source.size();
++    let half_pixel = [
++        0.5 / source_area.size.w as f32 * (full.w as f32 / storage.w as f32),
++        0.5 / source_area.size.h as f32 * (full.h as f32 / storage.h as f32),
++    ];
++    let target_size = target.size().to_logical(1, Transform::Normal).to_physical(1);
++    let mut target = renderer.bind(target)?;
++    let mut frame = renderer.render(&mut target, target_size, Transform::Normal)?;
++    frame.render_texture_from_to(
++        source,
++        source_area.to_f64(),
++        target_area,
++        &[damage.to_logical(1, Transform::Normal, &Size::default()).to_physical(1)],
++        &[Rectangle::from_size(target_area.size)],
++        Transform::Normal,
++        1.0,
++        Some(shader),
++        &[
++            Uniform::new("half_pixel", half_pixel),
++            Uniform::new("offset", (offset / f64::from(factor)) as f32),
++        ],
++    )?;
++    let _sync = frame.finish()?;
++    Ok(())
++}

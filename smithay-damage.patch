@@ -1,0 +1,201 @@
+diff --git a/src/backend/renderer/damage/mod.rs b/src/backend/renderer/damage/mod.rs
+--- a/src/backend/renderer/damage/mod.rs
++++ b/src/backend/renderer/damage/mod.rs
+@@ -188,6 +188,74 @@
+     clear_color: Option<Color32F>,
+ }
+ 
++/// Capture requirements for this paint of a framebuffer effect.
++#[derive(Clone, Copy, Debug, Default)]
++pub struct FramebufferDamagePlan {
++    /// Bounds of the changed backdrop.
++    pub region: Option<Rectangle<i32, Physical>>,
++    /// Only the partial backdrop has been reconstructed for this paint.
++    pub restricted_repaint: bool,
++}
++
++/// Capture plan published to the effect immediately before sampling.
++#[derive(Debug, Default)]
++pub struct FramebufferDamage(pub std::sync::Mutex<FramebufferDamagePlan>);
++
++type BackdropDamageMap = dyn Fn(Rectangle<i32, Physical>) -> Option<(Rectangle<i32, Physical>, bool)> + Send + Sync;
++
++/// Maps changed backdrop pixels to the area affected in a previously captured element.
++#[derive(Default)]
++pub struct FramebufferEffectDamage {
++    previous: std::sync::Mutex<Option<CapturedBackdropDamage>>,
++}
++
++struct CapturedBackdropDamage {
++    commit: CommitCounter,
++    geometry: Rectangle<i32, Physical>,
++    source: Rectangle<f64, BufferCoords>,
++    map: Box<BackdropDamageMap>,
++}
++
++impl FramebufferEffectDamage {
++    /// Updates the map for the successfully captured commit.
++    pub fn set(
++        &self,
++        commit: CommitCounter,
++        geometry: Rectangle<i32, Physical>,
++        source: Rectangle<f64, BufferCoords>,
++        map: impl Fn(Rectangle<i32, Physical>) -> Option<(Rectangle<i32, Physical>, bool)> + Send + Sync + 'static,
++    ) {
++        *self.previous.lock().unwrap() = Some(CapturedBackdropDamage { commit, geometry, source, map: Box::new(map) });
++    }
++
++    /// Discards the map when the capture no longer has a known footprint.
++    pub fn clear(&self) {
++        self.previous.lock().unwrap().take();
++    }
++
++    fn map(
++        &self,
++        commit: CommitCounter,
++        geometry: Rectangle<i32, Physical>,
++        source: Rectangle<f64, BufferCoords>,
++        rect: Rectangle<i32, Physical>,
++    ) -> Option<(Rectangle<i32, Physical>, bool)> {
++        let previous = self.previous.lock().unwrap();
++        let captured = previous.as_ref()?;
++        if captured.commit == commit && captured.geometry == geometry && captured.source == source {
++            return (captured.map)(rect);
++        }
++        None
++    }
++}
++
++impl std::fmt::Debug for FramebufferEffectDamage {
++    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        fmt.debug_struct("FramebufferEffectDamage").finish_non_exhaustive()
++    }
++}
++
++
+ /// Damage tracker for a single output
+ #[derive(Debug)]
+ pub struct OutputDamageTracker {
+@@ -199,6 +267,7 @@
+     opaque_regions: Vec<Rectangle<i32, Physical>>,
+     opaque_regions_index: Vec<Range<usize>>,
+     element_damage_index: Vec<usize>,
++    partial_capture: std::collections::HashMap<Id, FramebufferDamagePlan>,
+     element_opaque_regions: Vec<Rectangle<i32, Physical>>,
+     element_visible_area_workhouse: Vec<Rectangle<i32, Physical>>,
+     span: tracing::Span,
+@@ -265,6 +334,7 @@
+             opaque_regions: Default::default(),
+             opaque_regions_index: Default::default(),
+             element_damage_index: Default::default(),
++            partial_capture: Default::default(),
+             element_opaque_regions: Default::default(),
+             element_visible_area_workhouse: Default::default(),
+             span: info_span!("renderer_damage"),
+@@ -285,6 +355,7 @@
+             opaque_regions: Default::default(),
+             opaque_regions_index: Default::default(),
+             element_damage_index: Default::default(),
++            partial_capture: Default::default(),
+             element_opaque_regions: Default::default(),
+             element_visible_area_workhouse: Default::default(),
+             last_state: Default::default(),
+@@ -308,6 +379,7 @@
+             opaque_regions: Default::default(),
+             opaque_regions_index: Default::default(),
+             element_damage_index: Default::default(),
++            partial_capture: Default::default(),
+             element_visible_area_workhouse: Default::default(),
+             last_state: Default::default(),
+         }
+@@ -486,6 +558,7 @@
+     where
+         E: Element,
+     {
++        self.partial_capture.clear();
+         self.damage.clear();
+         self.opaque_regions.clear();
+         self.opaque_regions_index.clear();
+@@ -686,7 +759,8 @@
+             force_effect_redraw = true;
+         }
+ 
+-        // for backdrop elements check if anything below them changed and add full-damage, if it did.
++        let mut backdrop_repaint = Vec::new();
++        // Propagate visible changes up the stack before adding the regions needed for sampling.
+         for (z_index, element) in render_elements
+             .iter()
+             .enumerate()
+@@ -711,16 +785,45 @@
+                 .as_ref()
+                 .and_then(|states| states.states.get(element.id()));
+ 
+-            if element_state.needs_capture
+-                || with_element_state.is_some_and(|state| state.needs_capture)
+-                || self
+-                    .damage
+-                    .iter()
+-                    .skip(damage_index)
+-                    .any(|d| d.overlaps(intersection))
+-            {
++            let needs_full_capture = element_state.needs_capture
++                || with_element_state.is_some_and(|state| state.needs_capture);
++            let backdrop_damage = self.damage.iter().skip(damage_index)
++                .filter_map(|d| d.intersection(intersection))
++                .reduce(Rectangle::merge);
++            if needs_full_capture || backdrop_damage.is_some() {
++                if !needs_full_capture {
++                    if let Some(rect) = backdrop_damage {
++                        self.partial_capture.insert(element.id().clone(), FramebufferDamagePlan {
++                            region: Some(rect),
++                            restricted_repaint: false,
++                        });
++                    }
++                }
+                 element_state.needs_capture = true;
+-                self.damage.push(intersection);
++                let visual_damage = if !needs_full_capture && !force_effect_redraw {
++                    backdrop_damage
++                        .and_then(|rect| {
++                            self.last_state.effects_cache.get(element.id())?
++                                .get::<FramebufferEffectDamage>()?
++                                .map(element.current_commit(), element_geometry, element.src(), rect)
++                                .and_then(|(visual, restrict)| {
++                                    visual.merge(rect).intersection(intersection).map(|r| (r, restrict))
++                                })
++                        })
++                } else {
++                    None
++                };
++                if let Some((visual_damage, restrict)) = visual_damage.filter(|(rect, _)| *rect != intersection) {
++                    self.damage.push(visual_damage);
++                    if restrict && let Some(plan) = self.partial_capture.get_mut(element.id()) {
++                        plan.restricted_repaint = true;
++                    } else {
++                        // A full capture needs the entire backdrop reconstructed first.
++                        backdrop_repaint.push(intersection);
++                    }
++                } else {
++                    self.damage.push(intersection);
++                }
+                 // also drop all opaque regions on top, so they don't block re-drawing below the blur element
+                 for region in self.opaque_regions.iter_mut().take(opaque_regions_index) {
+                     // we want to leave `self.opaque_regions_index` intact,
+@@ -733,6 +836,8 @@
+                 }
+             }
+         }
++
++        self.damage.extend(backdrop_repaint);
+ 
+         // That is all completely new damage, which we need to store for subsequent renders
+         let mut new_damage = self.damage.clone();
+@@ -938,6 +1043,8 @@
+                         .effects_cache
+                         .entry(element_id.clone())
+                         .or_default();
++                    let damage = cache.get_or_insert_threadsafe(FramebufferDamage::default);
++                    *damage.0.lock().unwrap() = self.partial_capture.get(element_id).copied().unwrap_or_default();
+                     element.capture_framebuffer(&mut frame, element_src, element_geometry, cache)?;
+                 }
+ 

@@ -1,0 +1,72 @@
+diff --git a/src/backend/render/wayland/blur_effect.rs b/src/backend/render/wayland/blur_effect.rs
+--- a/src/backend/render/wayland/blur_effect.rs
++++ b/src/backend/render/wayland/blur_effect.rs
+@@ -880,7 +880,8 @@
+         .unwrap();
+         std::mem::drop(renderer);
+ 
+-        let hint = cache.get::<FramebufferDamage>().and_then(|damage| *damage.0.lock().unwrap());
++        let plan = cache.get::<FramebufferDamage>().map(|damage| *damage.0.lock().unwrap()).unwrap_or_default();
++        let hint = plan.region;
+         let pyramid_cache = cache.get_or_insert_threadsafe(Mutex::<BlurPyramid>::default);
+         let mut pyramid = pyramid_cache.lock().unwrap();
+         let context = gles_frame.renderer().as_ref().egl_context().get_context_handle() as usize;
+@@ -927,8 +928,7 @@
+             if !reusable || pyramid.scene != Some(scene)
+                 || dst.size.w != scene.source.size.w || dst.size.h != scene.source.size.h
+                 || src != scene.source.to_f64()
+-                || i64::from(rect.size.w) * i64::from(rect.size.h) * 2
+-                    >= i64::from(dst.size.w) * i64::from(dst.size.h)
++                || !prefer_partial_capture(rect, dst)
+             {
+                 return None;
+             }
+@@ -946,6 +946,11 @@
+                 && end.x <= tex_size.w - border && end.y <= tex_size.h - border)
+                 .then_some((dirty, rect))
+         });
++        if plan.restricted_repaint && partial.is_none() {
++            tracing::warn!("Rain backdrop cache changed after damage was planned");
++            // Abort this paint so the next frame reconstructs the full backdrop.
++            return Err(R::from_gles_error(GlesError::BlitError));
++        }
+         let dirty = partial.map(|(dirty, _)| dirty);
+ 
+         // Invalidate before touching a cache that could be left incomplete by a render error.
+@@ -996,7 +1001,8 @@
+                 scene.source.loc.x - dst.loc.x,
+                 scene.source.loc.y - dst.loc.y,
+             );
+-            cache.get_or_insert_threadsafe(FramebufferEffectDamage::default).set(self.commit, dst, move |rect| {
++            let may_restrict = reusable && self.rain_backdrop_margin.is_some();
++            cache.get_or_insert_threadsafe(FramebufferEffectDamage::default).set(self.commit, dst, src, move |rect| {
+                 let mut changed = Rectangle::new(
+                     Point::from((rect.loc.x + origin.x, rect.loc.y + origin.y)),
+                     Size::from((rect.size.w, rect.size.h)),
+@@ -1014,9 +1020,12 @@
+                 for level in (1..=passes).rev() {
+                     changed = pass_damage(changed, tex_size, level, level - 1, offset);
+                 }
+-                Some(Rectangle::new(
+-                    Point::from((changed.loc.x - origin.x - margin.w, changed.loc.y - origin.y - margin.h)),
+-                    Size::from((changed.size.w + 2 * margin.w, changed.size.h + 2 * margin.h)),
++                Some((
++                    Rectangle::new(
++                        Point::from((changed.loc.x - origin.x - margin.w, changed.loc.y - origin.y - margin.h)),
++                        Size::from((changed.size.w + 2 * margin.w, changed.size.h + 2 * margin.h)),
++                    ),
++                    may_restrict && prefer_partial_capture(rect, dst),
+                 ))
+             });
+         }
+@@ -1386,6 +1395,10 @@
+     [144.0, 8.0 * size + 16.0]
+ }
+ 
++fn prefer_partial_capture(rect: Rectangle<i32, Physical>, dst: Rectangle<i32, Physical>) -> bool {
++    i64::from(rect.size.w) * i64::from(rect.size.h) * 2 < i64::from(dst.size.w) * i64::from(dst.size.h)
++}
++
+ fn pass_damage(
+     damage: Rectangle<i32, Buffer>,
+     full: Size<i32, Buffer>,
