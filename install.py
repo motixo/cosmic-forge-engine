@@ -13,6 +13,7 @@ import subprocess
 import time
 
 import recovery
+from build import source_inputs
 
 from recovery import apply_changes, atomic, digest, paths, progress, record_for, restore, xdg
 from login_path import prepare as prepare_login_path
@@ -148,7 +149,7 @@ def main():
         # Check launcher ownership before starting a potentially long build.
         _, _, launcher = paths(args.prefix)
         _, record, _ = record_for(state, launcher)
-        if args.binary is None and record and isinstance(record.get('packages'), dict):
+        if args.binary is None and args.release_tag is None and record and isinstance(record.get('packages'), dict):
             compatible = dict(record, packages={name: record['packages'].get(name) for name in PACKAGES})
             if already_installed(compatible, packages, version, args.prefix):
                 if record['packages'] == packages:
@@ -158,9 +159,12 @@ def main():
                 return
         binary = args.binary
         if binary is None and args.build:
-            work = ROOT / 'build/sources' / version
+            release = json.loads((ROOT / 'release.json').read_text())
+            _, inputs = source_inputs(version, release)
+            fingerprint = digest(json.dumps(inputs).encode())
+            work = ROOT / 'build/sources' / f'{version}-{fingerprint}'
             if work.exists() and not (work / '.forge-source.json').exists():
-                work.rename(work.with_name(version + '-incomplete-' + str(time.time_ns())))
+                work.rename(work.with_name(work.name + '-incomplete-' + str(time.time_ns())))
             command = ['python3', str(ROOT / 'build.py'), '--cosmic-version', version,
                        '--work-dir', str(work)]
             target = os.environ.get('COSMIC_FORGE_ENGINE_TARGET') or str(

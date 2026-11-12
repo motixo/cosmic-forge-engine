@@ -1,6 +1,3 @@
-## Engine 0.6.4
-
-- Fix choppy shader animations in the Launcher and notification popups.
-- Reuse unchanged backdrops while shaders animate.
-
-Update through **Settings → Patches**, then log out and back in.
+- Support the latest Pop!_OS compositor build and fix window frame colors after a theme change.
+- Reduce redraw and blur work for animated effects, including Rain Glass.
+- Fix engine updates and rebuilding after source changes.

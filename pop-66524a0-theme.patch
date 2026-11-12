@@ -1,0 +1,8 @@
+diff --git a/src/theme.rs b/src/theme.rs
+--- a/src/theme.rs
++++ b/src/theme.rs
+@@ -55,3 +55,3 @@
+         update_crystal_tint(&new_theme);
+-        if theme.theme_type != new_theme.theme_type {
++        if state.common.theme.theme_type != new_theme.theme_type {
+             state.common.theme = new_theme;

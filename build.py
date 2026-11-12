@@ -15,13 +15,22 @@ from prepare_smithay import prepare_smithay
 ROOT = Path(__file__).resolve().parent
 
 
-def prepare(source, version, local=None, offline=False):
-    release = json.loads((ROOT / 'release.json').read_text())
+def source_inputs(version, release):
     pin = release['sources'][version]
     patches = [ROOT / name for name in release['bundle_files'] if name.startswith('patches/')]
+    if version == '1.11.0-pop.66524a0':
+        patches.append(ROOT / 'pop-66524a0-theme.patch')
     files = patches + [ROOT / 'smithay-damage.patch', ROOT / 'prepare_smithay.py'] + [ROOT / name for name in ['runtime.rs', 'loader.rs', 'animation.rs', 'effect_map.rs', 'backdrop.rs', 'surface_state.rs', 'glass.frag']]
     binary_version = pin + '-forge-r' + str(release['renderer_revision'])
-    expected = {'commit': pin, 'binary_version': binary_version, 'sha256': {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in files}}
+    return patches, {'commit': pin, 'binary_version': binary_version,
+                     'sha256': {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in files}}
+
+
+def prepare(source, version, local=None, offline=False):
+    release = json.loads((ROOT / 'release.json').read_text())
+    patches, expected = source_inputs(version, release)
+    pin = expected['commit']
+    binary_version = expected['binary_version']
     marker = source / '.forge-source.json'
     if marker.exists():
         if json.loads(marker.read_text()) != expected:

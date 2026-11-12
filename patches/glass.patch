@@ -608,12 +608,9 @@ index be509e7..884750a 100644
                  let value = get_config::<XkbConfig>(&config, "xkb_config");
                  let seats = state
 diff --git a/src/theme.rs b/src/theme.rs
-index d89d89f..4180cb4 100644
 --- a/src/theme.rs
 +++ b/src/theme.rs
-@@ -20,7 +20,21 @@ pub(crate) fn active_window_hint(theme: &Theme) -> palette::Srgba {
-     }
- }
+@@ -22,2 +22,15 @@
  
 +fn update_crystal_tint(theme: &cosmic::Theme) {
 +    let base = theme.cosmic().background(false).base;
@@ -629,28 +626,20 @@ index d89d89f..4180cb4 100644
 +}
 +
  pub fn watch_theme(handle: LoopHandle<'_, State>) -> Result<(), cosmic_config::Error> {
-+    update_crystal_tint(&cosmic::theme::system_preference());
-     let (ping_tx, ping_rx) = calloop::ping::make_ping().unwrap();
-     let config_mode_helper = ThemeMode::config()?;
+@@ -26,2 +39,3 @@
      let config_dark_helper = Theme::dark_config()?;
-@@ -28,6 +42,7 @@ pub fn watch_theme(handle: LoopHandle<'_, State>) -> Result<(), cosmic_config::E
++    update_crystal_tint(&cosmic::theme::system_preference());
+     let config_light_helper = Theme::light_config()?;
+@@ -32,2 +46,3 @@
  
-     if let Err(e) = handle.insert_source(ping_rx, move |_, _, state| {
-         let new_theme = cosmic::theme::system_preference();
 +        update_crystal_tint(&new_theme);
-         let theme = &mut state.common.theme;
- 
          if theme.theme_type != new_theme.theme_type {
-@@ -39,6 +54,9 @@ pub fn watch_theme(handle: LoopHandle<'_, State>) -> Result<(), cosmic_config::E
-                 &mut workspace_guard,
+@@ -40,2 +55,5 @@
              );
-         }
++        }
 +        for output in state.common.shell.read().outputs() {
 +            state.backend.schedule_render(output);
-+        }
-     }) {
-         tracing::error!("{e}");
-     };
+         }
 diff --git a/src/backend/render/shaders/crystal.frag b/src/backend/render/shaders/crystal.frag
 new file mode 100644
 --- /dev/null

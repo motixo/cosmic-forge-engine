@@ -138,6 +138,36 @@ class EngineInstallerTests(unittest.TestCase):
         self.assertIn('FORGE_PROGRESS:already_installed', output.getvalue())
         self.assertEqual({p: (p.read_bytes(), p.stat().st_mtime_ns) for p in before}, before)
 
+    def test_tagged_install_updates_a_different_binary_with_the_same_revision(self):
+        self.install()
+        previous = json.loads(self.record.read_text())
+        candidate = self.binary.with_name('patched-engine')
+        candidate.write_bytes(self.binary.read_bytes() + b'-patched')
+        tag = 'engine-v0.6.5'
+        with patch.object(sys, 'argv', ['install.py', '--prefix', str(self.prefix), '--release-tag', tag]), \
+             patch.object(installer, 'installed_packages', return_value=(PACKAGES, '1.10.0')), \
+             patch.object(installer, 'obtain', return_value=candidate) as obtain, \
+             patch.object(installer.subprocess, 'check_output', return_value=VERSION):
+            installer.main()
+        obtain.assert_called_once_with('1.10.0', RELEASE, tag, self.prefix)
+        installed = json.loads(self.record.read_text())
+        self.assertEqual(installed['binary_sha256'], installer.digest(candidate.read_bytes()))
+        self.assertEqual(installed['previous'], previous['previous'])
+
+    def test_source_build_selects_a_new_checkout_when_the_patch_changes(self):
+        _, inputs = installer.source_inputs('1.10.0', RELEASE)
+        changed = dict(inputs, sha256=dict(inputs['sha256'], **{'glass.patch': 'changed'}))
+        with patch.object(sys, 'argv', ['install.py', '--prefix', str(self.prefix), '--build']), \
+             patch.object(installer, 'installed_packages', return_value=(PACKAGES, '1.10.0')), \
+             patch.object(installer, 'source_inputs', side_effect=[([], inputs), ([], changed)]), \
+             patch.object(installer, 'install'), patch.object(installer.subprocess, 'run') as run:
+            installer.main()
+            installer.main()
+        work = [Path(call.args[0][call.args[0].index('--work-dir') + 1]) for call in run.call_args_list]
+        self.assertEqual(len(work), 2)
+        self.assertEqual(work[0].parent, work[1].parent)
+        self.assertNotEqual(work[0], work[1])
+
     def test_different_revision_or_packages_do_not_skip_installation(self):
         self.install()
         record = json.loads(self.record.read_text())
