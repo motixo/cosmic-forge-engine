@@ -1,0 +1,539 @@
+diff --git a/src/backend/render/wayland/blur_effect.rs b/src/backend/render/wayland/blur_effect.rs
+--- a/src/backend/render/wayland/blur_effect.rs
++++ b/src/backend/render/wayland/blur_effect.rs
+@@ -155,6 +155,7 @@
+     crystal: GlesTexProgram,
+     aero: GlesTexProgram,
+     glass: GlesTexProgram,
++    frosted: Option<(GlesTexProgram, GlesTexProgram)>,
+ }
+ 
+ impl BlurShaders {
+@@ -218,13 +219,46 @@
+                 UniformName::new("theme_accent", UniformType::_3f),
+             ],
+         )?;
++        let frosted = Self::compile_frosted(renderer)
++            .inspect_err(|error| trace!(?error, "Fused Frosted Glass shaders unavailable"))
++            .ok();
+         Ok(BlurShaders {
++            frosted,
+             up,
+             down,
+             crystal,
+             aero,
+             glass,
+         })
++    }
++
++    fn compile_frosted(
++        renderer: &mut GlesRenderer,
++    ) -> Result<(GlesTexProgram, GlesTexProgram), GlesError> {
++        let down = renderer.compile_custom_texture_shader(
++            &BLUR_DOWNSAMPLE_SHADER.replace("//_DEFINES_", "//_DEFINES_\n#define FORGE_FROSTED_CAPTURE"),
++            &[
++                UniformName::new("half_pixel", UniformType::_2f),
++                UniformName::new("offset", UniformType::_1f),
++                UniformName::new("scene_tex", UniformType::_1i),
++                UniformName::new("scene_window", UniformType::_4f),
++                UniformName::new("scene_size", UniformType::_2f),
++            ],
++        )?;
++        let draw = renderer.compile_custom_texture_shader(
++            &include_str!("../shaders/clipped_surface.frag")
++                .replace("//_DEFINES_", "//_DEFINES_\n#define FORGE_FROSTED_UPSAMPLE"),
++            &[
++                UniformName::new("geo_size", UniformType::_2f),
++                UniformName::new("corner_radius", UniformType::_4f),
++                UniformName::new("input_to_geo", UniformType::Matrix3x3),
++                UniformName::new("noise", UniformType::_1f),
++                UniformName::new("frosted_tex", UniformType::_1i),
++                UniformName::new("frosted_mapping", UniformType::_4f),
++                UniformName::new("frosted_step", UniformType::_2f),
++            ],
++        )?;
++        Ok((down, draw))
+     }
+ 
+     pub fn get<R: AsGlowRenderer>(renderer: &R) -> Self {
+@@ -246,6 +280,7 @@
+     levels: Vec<GlesTexture>,
+     upsampled: Vec<GlesTexture>,
+     scene: Option<SceneCapture>,
++    frosted_source: Option<(SceneCapture, GlesTexture)>,
+ }
+ 
+ #[derive(Clone, Copy, PartialEq, Eq)]
+@@ -258,6 +293,13 @@
+     passes: usize,
+ }
+ 
++
++struct FrostedCapture<'a> {
++    down: &'a GlesTexProgram,
++    attachment: GlesTexture,
++    scene: SceneCapture,
++    footprint: Vec<Rectangle<i32, Buffer>>,
++}
+ 
+ // A separate cache type keeps the original background before Kawase blur.
+ struct CrystalSharpTexture<T>(Mutex<Option<T>>);
+@@ -360,6 +402,59 @@
+ }
+ 
+ impl BlurElement {
++    fn frosted_capture(
++        &self,
++        frame: &GlesFrame<'_, '_>,
++        src: Rectangle<f64, Buffer>,
++        scene: SceneCapture,
++    ) -> Option<FrostedCapture<'_>> {
++        let (down, _) = self.scaling_shaders.frosted.as_ref()?;
++        let dst = scene.geometry;
++        let full = self.src.to_i32_round();
++        if !self.local_backdrop_damage
++            || self.passes == 0
++            || frame.transformation() != Transform::Normal
++            || src != Rectangle::from_size(full.to_f64())
++            || dst.size.w != full.w
++            || dst.size.h != full.h
++        {
++            return None;
++        }
++        let attachment = frame.color_attachment()?;
++        let size = attachment.size();
++        if size.w != frame.output_size().w || size.h != frame.output_size().h
++            || !matches!(attachment.format(), Some(
++                Fourcc::Abgr8888 | Fourcc::Argb8888 | Fourcc::Abgr2101010 | Fourcc::Argb2101010
++            ))
++        {
++            return None;
++        }
++
++        let visible = Rectangle::from_size(frame.output_size()).intersection(dst)?;
++        let visible = Rectangle::new(
++            Point::new(visible.loc.x - dst.loc.x, visible.loc.y - dst.loc.y),
++            Size::new(visible.size.w, visible.size.h),
++        );
++        let scale = self.src / self.geometry.size;
++        let region = self.region.iter().map(|rect| {
++            let start = rect.loc.to_f64().upscale(scale);
++            let end = (rect.loc + rect.size).to_f64().upscale(scale);
++            Rectangle::<i32, Buffer>::new(
++                Point::new(start.x.floor() as i32 - 2, start.y.floor() as i32 - 2),
++                Size::new(end.x.ceil() as i32 - start.x.floor() as i32 + 4,
++                          end.y.ceil() as i32 - start.y.floor() as i32 + 4),
++            )
++        }).reduce(Rectangle::merge)?;
++        let footprint = blur_footprint(region.intersection(visible)?, full, self.offset, self.passes);
++        let input = footprint[0];
++        let end = input.loc + input.size;
++        // The full-resolution capture can wrap at its own edges.
++        if input.loc.x == 0 || input.loc.y == 0 || end.x == full.w || end.y == full.h {
++            return None;
++        }
++        Some(FrostedCapture { down, attachment, scene, footprint })
++    }
++
+     pub(crate) fn take_animation_damage(&mut self) -> Option<DamageElement> {
+         self.animation_damage.take()
+     }
+@@ -913,7 +1008,16 @@
+             offset: self.offset.to_bits(),
+             passes: self.passes,
+         };
+-        let keep_original = self.passes > 0
++        // Keep the incremental path for a stationary window with lower-surface damage.
++        let same_scene = pyramid.scene == Some(scene)
++            || pyramid.frosted_source.as_ref().is_some_and(|(last, _)| *last == scene);
++        let incremental = same_scene && hint.is_some_and(|rect| prefer_partial_capture(rect, dst));
++        let frosted = if !incremental && !plan.restricted_repaint {
++            self.frosted_capture(gles_frame, src, scene)
++        } else {
++            None
++        };
++        let keep_original = frosted.is_none() && self.passes > 0
+             && (self.needs_sharp || hint.is_some() || pyramid.scene.is_some());
+         let mut sharp = if keep_original {
+             let sharp_cache =
+@@ -975,12 +1079,19 @@
+ 
+         // Invalidate before touching a cache that could be left incomplete by a render error.
+         pyramid.scene = None;
++        pyramid.frosted_source = None;
+         let target = sharp.as_mut().unwrap_or(&mut texture);
+         let (capture_src, capture_dst) = partial.map_or((src, dst), |(dirty, rect)| (dirty.to_f64(), rect));
+-        let sync = blit_from_active_fb(gles_frame, capture_src, capture_dst, transform, target, dirty.is_none())
+-            .map_err(R::from_gles_error)?;
++        let sync = if frosted.is_none() {
++            Some(blit_from_active_fb(gles_frame, capture_src, capture_dst, transform, target, dirty.is_none())
++                .map_err(R::from_gles_error)?)
++        } else {
++            None
++        };
+         let mut renderer = gles_frame.renderer();
+-        renderer.as_mut().wait(&sync).map_err(R::from_gles_error)?;
++        if let Some(sync) = sync {
++            renderer.as_mut().wait(&sync).map_err(R::from_gles_error)?;
++        }
+         let note_capture = || {
+             if self.rain_field.is_some() {
+                 cache.get_or_insert_threadsafe(Mutex::<forge_effect_map::BackdropMotion>::default)
+@@ -988,7 +1099,7 @@
+             }
+         };
+         if self.passes > 0 {
+-            render_blur(
++            render_blur_passes(
+                 renderer.as_mut(),
+                 &self.scaling_shaders,
+                 &mut texture,
+@@ -998,6 +1109,7 @@
+                 self.passes,
+                 keep_original,
+                 dirty,
++                frosted.as_ref(),
+             )
+             .map_err(R::from_gles_error)?;
+         }
+@@ -1152,8 +1264,28 @@
+                 let size = field.size();
+                 uniforms.push(Uniform::new("forge_rain_field_size", (size.w as f32, size.h as f32)));
+             }
++            let fused = (self.local_backdrop_damage && self.wallpaper.is_none())
++                .then_some(cache)
++                .flatten()
++                .and_then(|data| data.get::<Mutex<BlurPyramid>>())
++                .and_then(|state| state.lock().unwrap().frosted_source.as_ref().map(|(_, source)| source.clone()));
++            if let Some(source) = fused.as_ref() {
++                let storage = source.size();
++                let full = tex.size();
++                let content = full.downscale(2);
++                let [x, y] = blur_half_pixel(full, storage, content);
++                let offset = (self.offset / 2.0) as f32;
++                uniforms.extend([
++                    Uniform::new("frosted_tex", 1_i32),
++                    Uniform::new("frosted_mapping", [
++                        content.w as f32 / storage.w as f32, content.h as f32 / storage.h as f32,
++                        1.0 / storage.w as f32, 1.0 / storage.h as f32,
++                    ]),
++                    Uniform::new("frosted_step", [x * offset, y * offset]),
++                ]);
++            }
+             let textures = [
+-                sharp.as_ref(),
++                sharp.as_ref().or(fused.as_ref()),
+                 rain.as_ref().map(|(field, _)| field).or_else(|| map.as_ref().map(|(water, _)| water)),
+                 rain.as_ref().map(|(_, shade)| shade).or_else(|| map.as_ref().and_then(|(_, shade)| shade.as_ref())),
+             ];
+@@ -1189,6 +1321,8 @@
+             };
+             let shader = if rain.is_some() {
+                 &self.rain_field.as_ref().unwrap().sample
++            } else if fused.is_some() {
++                &self.scaling_shaders.frosted.as_ref().unwrap().1
+             } else {
+                 &self.render_shader
+             };
+@@ -1325,6 +1459,22 @@
+     preserve_levels: bool,
+     dirty: Option<Rectangle<i32, Buffer>>,
+ ) -> Result<(), GlesError> {
++    render_blur_passes(renderer, shaders, output, original, pyramid, offset, passes, preserve_levels, dirty, None)
++}
++
++#[allow(clippy::too_many_arguments)]
++fn render_blur_passes(
++    renderer: &mut GlesRenderer,
++    shaders: &BlurShaders,
++    output: &mut GlesTexture,
++    original: Option<&GlesTexture>,
++    pyramid: &mut BlurPyramid,
++    offset: f64,
++    passes: usize,
++    preserve_levels: bool,
++    dirty: Option<Rectangle<i32, Buffer>>,
++    frosted: Option<&FrostedCapture<'_>>,
++) -> Result<(), GlesError> {
+     let full = output.size();
+     let context = renderer.context_id();
+     if pyramid.context.as_ref() != Some(&context) || pyramid.size != Some(full) {
+@@ -1345,24 +1495,33 @@
+         }
+     }
+ 
++    pyramid.frosted_source = None;
+     let mut damage = dirty.unwrap_or_else(|| Rectangle::from_size(full));
+     for level in 1..=passes {
+         let (previous, targets) = pyramid.levels.split_at_mut(level - 1);
+         let source = previous.last().unwrap_or_else(|| original.unwrap_or(output));
+-        damage = pass_damage(damage, full, level - 1, level, offset);
+-        blur_pass(renderer, &shaders.down, full, source, &mut targets[0], level - 1, level, offset, damage)?;
++        damage = frosted.map_or_else(|| pass_damage(damage, full, level - 1, level, offset),
++                                    |frosted| frosted.footprint[level]);
++        let capture = frosted.filter(|_| level == 1);
++        let shader = capture.map_or(&shaders.down, |capture| capture.down);
++        blur_pass(renderer, shader, full, source, &mut targets[0], level - 1, level, offset, damage, capture)?;
+     }
+     for level in (1..=passes).rev() {
+-        damage = pass_damage(damage, full, level, level - 1, offset);
++        if level == 1 && let Some(frosted) = frosted {
++            pyramid.frosted_source = Some((frosted.scene, pyramid.levels[0].clone()));
++            break;
++        }
++        damage = frosted.map_or_else(|| pass_damage(damage, full, level, level - 1, offset),
++                                    |frosted| frosted.footprint[2 * passes - level + 1]);
+         if preserve_levels {
+             let (lower, higher) = pyramid.upsampled.split_at_mut(level.saturating_sub(1));
+             let source = if level == passes { &pyramid.levels[level - 1] } else { &higher[0] };
+             let target = lower.last_mut().unwrap_or(output);
+-            blur_pass(renderer, &shaders.up, full, source, target, level, level - 1, offset, damage)?;
++            blur_pass(renderer, &shaders.up, full, source, target, level, level - 1, offset, damage, None)?;
+         } else {
+             let (targets, sources) = pyramid.levels.split_at_mut(level - 1);
+             let target = targets.last_mut().unwrap_or(output);
+-            blur_pass(renderer, &shaders.up, full, &sources[0], target, level, level - 1, offset, damage)?;
++            blur_pass(renderer, &shaders.up, full, &sources[0], target, level, level - 1, offset, damage, None)?;
+         }
+     }
+     Ok(())
+@@ -1406,6 +1565,36 @@
+ 
+ fn prefer_partial_capture(rect: Rectangle<i32, Physical>, dst: Rectangle<i32, Physical>) -> bool {
+     i64::from(rect.size.w) * i64::from(rect.size.h) * 2 < i64::from(dst.size.w) * i64::from(dst.size.h)
++}
++
++// Propagate the visible bounds backwards through the unchanged sampling grids.
++fn blur_footprint(
++    output: Rectangle<i32, Buffer>,
++    full: Size<i32, Buffer>,
++    offset: f64,
++    passes: usize,
++) -> Vec<Rectangle<i32, Buffer>> {
++    let mut footprint = vec![output; 2 * passes + 1];
++    for step in (0..2 * passes).rev() {
++        let source_level = step.min(2 * passes - step);
++        let target_level = (step + 1).min(2 * passes - step - 1);
++        let source = full.downscale(1 << source_level);
++        let target = full.downscale(1 << target_level);
++        let needed = footprint[step + 1];
++        let bound = |lo: i32, hi: i32, full: i32, source: i32, target: i32| {
++            let ratio = f64::from(source) / f64::from(target);
++            let tap = if source_level > target_level { 1.0 } else { 0.5 };
++            // Two extra texels cover bilinear support and coordinate rounding.
++            let radius = tap * offset * f64::from(full) / f64::from(source << source_level) + 2.0;
++            let lo = ((f64::from(lo) * ratio - radius).floor() as i32).clamp(0, source);
++            let hi = ((f64::from(hi) * ratio + radius).ceil() as i32).clamp(lo, source);
++            (lo, hi)
++        };
++        let (x0, x1) = bound(needed.loc.x, needed.loc.x + needed.size.w, full.w, source.w, target.w);
++        let (y0, y1) = bound(needed.loc.y, needed.loc.y + needed.size.h, full.h, source.h, target.h);
++        footprint[step] = Rectangle::new(Point::new(x0, y0), Size::new(x1 - x0, y1 - y0));
++    }
++    footprint
+ }
+ 
+ fn pass_damage(
+@@ -1431,6 +1620,13 @@
+     Rectangle::new(Point::from((x1, y1)), Size::from((x2 - x1, y2 - y1)))
+ }
+ 
++fn blur_half_pixel(full: Size<i32, Buffer>, storage: Size<i32, Buffer>, content: Size<i32, Buffer>) -> [f32; 2] {
++    [
++        0.5 / content.w as f32 * (full.w as f32 / storage.w as f32),
++        0.5 / content.h as f32 * (full.h as f32 / storage.h as f32),
++    ]
++}
++
+ #[allow(clippy::too_many_arguments)]
+ fn blur_pass(
+     renderer: &mut GlesRenderer,
+@@ -1442,6 +1638,7 @@
+     target_level: usize,
+     offset: f64,
+     damage: Rectangle<i32, Buffer>,
++    capture: Option<&FrostedCapture<'_>>,
+ ) -> Result<(), GlesError> {
+     let factor = 1 << source_level;
+     let source_area = Rectangle::new(
+@@ -1454,15 +1651,30 @@
+     )
+     .to_logical(1, Transform::Normal, &Size::default())
+     .to_physical(1);
+-    let storage = source.size();
+-    let half_pixel = [
+-        0.5 / source_area.size.w as f32 * (full.w as f32 / storage.w as f32),
+-        0.5 / source_area.size.h as f32 * (full.h as f32 / storage.h as f32),
+-    ];
++    let half_pixel = blur_half_pixel(full, source.size(), source_area.size);
+     let target_size = target.size().to_logical(1, Transform::Normal).to_physical(1);
+     let mut target = renderer.bind(target)?;
+     let mut frame = renderer.render(&mut target, target_size, Transform::Normal)?;
+-    frame.render_texture_from_to(
++    let base = [
++        Uniform::new("half_pixel", half_pixel),
++        Uniform::new("offset", (offset / f64::from(factor)) as f32),
++    ];
++    let extra;
++    let uniforms = if let Some(capture) = capture {
++        let size = capture.attachment.size();
++        let origin = capture.scene.geometry.loc;
++        extra = [
++            base[0].clone(),
++            base[1].clone(),
++            Uniform::new("scene_tex", 1_i32),
++            Uniform::new("scene_window", [origin.x as f32, origin.y as f32, full.w as f32, full.h as f32]),
++            Uniform::new("scene_size", [size.w as f32, size.h as f32]),
++        ];
++        &extra[..]
++    } else {
++        &base[..]
++    };
++    let draw = |frame: &mut GlesFrame<'_, '_>| frame.render_texture_from_to(
+         source,
+         source_area.to_f64(),
+         target_area,
+@@ -1471,11 +1683,56 @@
+         Transform::Normal,
+         1.0,
+         Some(shader),
+-        &[
+-            Uniform::new("half_pixel", half_pixel),
+-            Uniform::new("offset", (offset / f64::from(factor)) as f32),
+-        ],
+-    )?;
++        uniforms,
++    );
++    if let Some(capture) = capture {
++        with_scene_texture(&mut frame, &capture.attachment, draw)?;
++    } else {
++        draw(&mut frame)?;
++    }
+     let _sync = frame.finish()?;
+     Ok(())
+ }
++
++// This attachment belongs to the outer frame. Only sample it in a distinct target.
++fn with_scene_texture(
++    frame: &mut GlesFrame<'_, '_>,
++    texture: &GlesTexture,
++    draw: impl FnOnce(&mut GlesFrame<'_, '_>) -> Result<(), GlesError>,
++) -> Result<(), GlesError> {
++    let keys = [
++        ffi::TEXTURE_MIN_FILTER, ffi::TEXTURE_MAG_FILTER,
++        ffi::TEXTURE_WRAP_S, ffi::TEXTURE_WRAP_T,
++    ];
++    let (active, previous, state) = frame.with_context(|gl| unsafe {
++        let mut active = 0;
++        let mut previous = 0;
++        gl.GetIntegerv(ffi::ACTIVE_TEXTURE, &mut active);
++        gl.ActiveTexture(ffi::TEXTURE1);
++        gl.GetIntegerv(ffi::TEXTURE_BINDING_2D, &mut previous);
++        gl.BindTexture(ffi::TEXTURE_2D, texture.tex_id());
++        let state: [i32; 4] = std::array::from_fn(|i| {
++            let mut value = 0;
++            gl.GetTexParameteriv(ffi::TEXTURE_2D, keys[i], &mut value);
++            gl.TexParameteri(ffi::TEXTURE_2D, keys[i], if i < 2 {
++                ffi::LINEAR as i32
++            } else {
++                ffi::CLAMP_TO_EDGE as i32
++            });
++            value
++        });
++        gl.ActiveTexture(active as u32);
++        (active, previous, state)
++    })?;
++    let result = draw(frame);
++    frame.with_context(|gl| unsafe {
++        gl.ActiveTexture(ffi::TEXTURE1);
++        gl.BindTexture(ffi::TEXTURE_2D, texture.tex_id());
++        for (name, value) in keys.into_iter().zip(state) {
++            gl.TexParameteri(ffi::TEXTURE_2D, name, value);
++        }
++        gl.BindTexture(ffi::TEXTURE_2D, previous as u32);
++        gl.ActiveTexture(active as u32);
++    })?;
++    result
++}
+diff --git a/src/backend/render/shaders/clipped_surface.frag b/src/backend/render/shaders/clipped_surface.frag
+--- a/src/backend/render/shaders/clipped_surface.frag
++++ b/src/backend/render/shaders/clipped_surface.frag
+@@ -58,12 +58,40 @@
+     return fract((p3.x + p3.y) * p3.z);
+ }
+ 
++#if defined(FORGE_FROSTED_UPSAMPLE)
++uniform sampler2D frosted_tex;
++uniform vec4 frosted_mapping;
++uniform vec2 frosted_step;
++
++vec4 sample_frosted() {
++    vec2 coords = v_coords * frosted_mapping.xy + frosted_mapping.zw;
++    vec2 step = frosted_step;
++    vec4 sum = texture2D(frosted_tex, coords + vec2(-step.x * 2.0, 0.0));
++    sum += texture2D(frosted_tex, coords + vec2(-step.x, step.y)) * 2.0;
++    sum += texture2D(frosted_tex, coords + vec2(0.0, step.y * 2.0));
++    sum += texture2D(frosted_tex, coords + vec2(step.x, step.y)) * 2.0;
++    sum += texture2D(frosted_tex, coords + vec2(step.x * 2.0, 0.0));
++    sum += texture2D(frosted_tex, coords + vec2(step.x, -step.y)) * 2.0;
++    sum += texture2D(frosted_tex, coords + vec2(0.0, -step.y * 2.0));
++    sum += texture2D(frosted_tex, coords + vec2(-step.x, -step.y)) * 2.0;
++    if (sum.a == 0.0) {
++        return vec4(0.0);
++    }
++    // Match the RGBA8 intermediate that this pass replaces.
++    return floor(clamp(sum / sum.a, 0.0, 1.0) * 255.0 + 0.5) / 255.0;
++}
++#endif
++
+ void main() {
+     if (alpha <= 0.0) {
+         discard;
+     }
+ 
++    #if defined(FORGE_FROSTED_UPSAMPLE)
++    vec4 color = sample_frosted();
++    #else
+     vec4 color = texture2D(tex, v_coords);
++    #endif
+     #if defined(NO_ALPHA)
+     color = vec4(color.rgb, 1.0);
+     #endif
+diff --git a/src/backend/render/shaders/blur_downsample.frag b/src/backend/render/shaders/blur_downsample.frag
+--- a/src/backend/render/shaders/blur_downsample.frag
++++ b/src/backend/render/shaders/blur_downsample.frag
+@@ -15,12 +15,29 @@
+ uniform float tint;
+ #endif
+ 
++#if defined(FORGE_FROSTED_CAPTURE)
++uniform sampler2D scene_tex;
++uniform vec4 scene_window;
++uniform vec2 scene_size;
++
++vec4 sample_input(vec2 coords) {
++    vec2 pixel = scene_window.xy + coords * scene_window.zw;
++    // Match the old capture's transparent pixels outside the output.
++    vec2 covered = clamp(min(pixel + 0.5, scene_size + 0.5 - pixel), 0.0, 1.0);
++    return texture2D(scene_tex, pixel / scene_size) * (covered.x * covered.y);
++}
++#else
++vec4 sample_input(vec2 coords) {
++    return texture2D(tex, coords);
++}
++#endif
++
+ void main() {
+-    vec4 sum = texture2D(tex, v_coords) * 4.0;
+-    sum += texture2D(tex, v_coords - half_pixel * offset);
+-    sum += texture2D(tex, v_coords + half_pixel * offset);
+-    sum += texture2D(tex, v_coords + vec2(half_pixel.x, -half_pixel.y) * offset);
+-    sum += texture2D(tex, v_coords - vec2(half_pixel.x, -half_pixel.y) * offset);
++    vec4 sum = sample_input(v_coords) * 4.0;
++    sum += sample_input(v_coords - half_pixel * offset);
++    sum += sample_input(v_coords + half_pixel * offset);
++    sum += sample_input(v_coords + vec2(half_pixel.x, -half_pixel.y) * offset);
++    sum += sample_input(v_coords - vec2(half_pixel.x, -half_pixel.y) * offset);
+ 
+     if (sum.a == 0.0) {
+         gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);

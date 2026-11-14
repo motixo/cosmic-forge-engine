@@ -42,6 +42,7 @@
     "patches/stacked-blur.patch",
     "patches/rain-repaint.patch",
     "patches/animation-focus.patch",
+    "patches/frosted-fused-blur.patch",
     "glass.frag",
     "platforms.py",
     "prebuilt.py",

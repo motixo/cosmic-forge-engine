@@ -199,3 +199,23 @@ diff --git a/src/backend/renderer/damage/mod.rs b/src/backend/renderer/damage/mo
                      element.capture_framebuffer(&mut frame, element_src, element_geometry, cache)?;
                  }
  
+diff --git a/src/backend/renderer/gles/mod.rs b/src/backend/renderer/gles/mod.rs
+--- a/src/backend/renderer/gles/mod.rs
++++ b/src/backend/renderer/gles/mod.rs
+@@ -2183,6 +2183,16 @@
+ }
+ 
+ impl GlesFrame<'_, '_> {
++    /// The color attachment of a texture-backed frame.
++    ///
++    /// Sample it only from another framebuffer while this frame is alive.
++    pub fn color_attachment(&self) -> Option<GlesTexture> {
++        match &self.target.0 {
++            GlesTargetInternal::Texture { texture, .. } => Some(texture.clone()),
++            _ => None,
++        }
++    }
++
+     /// Run custom code in the GL context owned by this renderer.
+     ///
+     /// The OpenGL state of the renderer is considered an implementation detail
