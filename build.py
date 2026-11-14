@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parent
 def source_inputs(version, release):
     pin = release['sources'][version]
     patches = [ROOT / name for name in release['bundle_files'] if name.startswith('patches/')]
-    if version in ('1.11.0-pop.66524a0', '1.11.0-pop.8129317'):
+    if version in ('1.11.0-pop.66524a0', '1.11.0-pop.8129317', '1.11.0-pop.f2beba6'):
         patches.append(ROOT / 'pop-66524a0-theme.patch')
     files = patches + [ROOT / 'smithay-damage.patch', ROOT / 'prepare_smithay.py'] + [ROOT / name for name in ['runtime.rs', 'loader.rs', 'animation.rs', 'effect_map.rs', 'backdrop.rs', 'surface_state.rs', 'glass.frag']]
     binary_version = pin + '-forge-r' + str(release['renderer_revision'])

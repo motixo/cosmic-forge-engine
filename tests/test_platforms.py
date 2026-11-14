@@ -15,7 +15,8 @@ PIN = json.loads((ROOT / 'release.json').read_text())['sources']['1.10.0']
 
 class PlatformTests(unittest.TestCase):
     def test_pop_noble_compositor_snapshots_are_supported(self):
-        for build, commit in [('1794310577', '66524a0'), ('1794501573', '8129317')]:
+        for build, commit in [('1794310577', '66524a0'), ('1794501573', '8129317'),
+                              ('1794504377', 'f2beba6')]:
             with self.subTest(commit=commit):
                 self.assertEqual(
                     platforms.compositor_version(f'cosmic-comp 0.1~{build}~24.04~{commit} installed'),
