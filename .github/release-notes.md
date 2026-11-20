@@ -1,2 +1,2 @@
-- Support Pop!_OS 24.04 compositor build `f2beba6` and preserve the window frame color fix.
-- Reduce Frosted Glass GPU time by about 23% in the tested overlapping-window scenes at 1080p/60.
+- Support the latest Pop!_OS 24.04 compositor build, `abb6ebc`.
+- Keep window frame colors in sync when switching themes on newer Pop!_OS builds.
