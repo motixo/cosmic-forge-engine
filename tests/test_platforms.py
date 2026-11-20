@@ -9,6 +9,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 import platforms
+from build import source_inputs
 
 PIN = json.loads((ROOT / 'release.json').read_text())['sources']['1.10.0']
 
@@ -16,12 +17,20 @@ PIN = json.loads((ROOT / 'release.json').read_text())['sources']['1.10.0']
 class PlatformTests(unittest.TestCase):
     def test_pop_noble_compositor_snapshots_are_supported(self):
         for build, commit in [('1794310577', '66524a0'), ('1794501573', '8129317'),
-                              ('1794504377', 'f2beba6')]:
+                              ('1794504377', 'f2beba6'),
+                              ('1794842928', '0a67a6c'), ('1795099112', 'abb6ebc')]:
             with self.subTest(commit=commit):
                 self.assertEqual(
                     platforms.compositor_version(f'cosmic-comp 0.1~{build}~24.04~{commit} installed'),
                     f'1.11.0-pop.{commit}',
                 )
+
+    def test_new_pop_builds_keep_the_theme_update_fix(self):
+        release = json.loads((ROOT / 'release.json').read_text())
+        for version in ('1.11.0-pop.0a67a6c', '1.11.0-pop.abb6ebc'):
+            with self.subTest(version=version):
+                patches, _ = source_inputs(version, release)
+                self.assertIn(ROOT / 'pop-66524a0-theme.patch', patches)
 
     def test_native_package_managers_capture_exact_versions(self):
         for identity, manager, version in [('arch', 'pacman', '1:1.10.0-1'),
