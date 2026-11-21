@@ -1,8 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-only
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
+import subprocess
+import sys
+import textwrap
 import tempfile
 import unittest
 
@@ -23,6 +27,31 @@ class PackageTests(unittest.TestCase):
         for name, source in bundle['files'].items():
             self.assertEqual(source, (ROOT / name).read_text())
         self.assertEqual(publisher.package(ROOT), data)
+
+    def test_release_matrix_can_select_one_pinned_build(self):
+        workflow = (ROOT / '.github/workflows/release.yml').read_text()
+        script = textwrap.dedent(workflow.split(
+            "python - <<'PYTHON' >> \"$GITHUB_OUTPUT\"\n", 1
+        )[1].split('          PYTHON', 1)[0])
+        source_count = len(json.loads((ROOT / 'release.json').read_text())['sources'])
+        for selected, expected in [('', 2 * source_count), ('1.11.0-pop.6968c5d', 2)]:
+            with self.subTest(selected=selected):
+                result = subprocess.run(
+                    [sys.executable, '-c', script], cwd=ROOT,
+                    env=dict(os.environ, COSMIC_VERSION=selected),
+                    check=True, capture_output=True, text=True,
+                )
+                matrix = json.loads(result.stdout.removeprefix('value='))['include']
+                self.assertEqual(len(matrix), expected)
+                if selected:
+                    self.assertEqual({entry['version'] for entry in matrix}, {selected})
+        invalid = subprocess.run(
+            [sys.executable, '-c', script], cwd=ROOT,
+            env=dict(os.environ, COSMIC_VERSION='unknown'),
+            capture_output=True, text=True,
+        )
+        self.assertNotEqual(invalid.returncode, 0)
+        self.assertIn('COSMIC version is not pinned', invalid.stderr)
 
     def test_invalid_manifest_and_symlinks_are_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:

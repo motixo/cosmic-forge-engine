@@ -18,7 +18,8 @@ class PlatformTests(unittest.TestCase):
     def test_pop_noble_compositor_snapshots_are_supported(self):
         for build, commit in [('1794310577', '66524a0'), ('1794501573', '8129317'),
                               ('1794504377', 'f2beba6'),
-                              ('1794842928', '0a67a6c'), ('1795099112', 'abb6ebc')]:
+                              ('1794842928', '0a67a6c'), ('1795099112', 'abb6ebc'),
+                              ('1795264930', '6968c5d')]:
             with self.subTest(commit=commit):
                 self.assertEqual(
                     platforms.compositor_version(f'cosmic-comp 0.1~{build}~24.04~{commit} installed'),
@@ -27,7 +28,8 @@ class PlatformTests(unittest.TestCase):
 
     def test_new_pop_builds_keep_the_theme_update_fix(self):
         release = json.loads((ROOT / 'release.json').read_text())
-        for version in ('1.11.0-pop.0a67a6c', '1.11.0-pop.abb6ebc'):
+        for version in ('1.11.0-pop.0a67a6c', '1.11.0-pop.abb6ebc',
+                        '1.11.0-pop.6968c5d'):
             with self.subTest(version=version):
                 patches, _ = source_inputs(version, release)
                 self.assertIn(ROOT / 'pop-66524a0-theme.patch', patches)
