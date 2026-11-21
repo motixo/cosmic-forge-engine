@@ -13,6 +13,10 @@ on:
       release_tag:
         type: string
         default: engine-v0.6.8
+      cosmic_version:
+        description: Build only this pinned COSMIC version
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -32,11 +36,18 @@ jobs:
       - run: python scripts/package_engine.py
       - run: cat LICENSE LICENSE.libdisplay-info > build/release/LICENSES.txt
       - id: versions
+        env:
+          COSMIC_VERSION: ${{ inputs.cosmic_version }}
         run: |
           python - <<'PYTHON' >> "$GITHUB_OUTPUT"
           import json
+          import os
           release = json.load(open('release.json'))
-          matrix = [{'version': v, 'toolchain': release['toolchains'][v], 'cache_toolchain': release['toolchains'][v].removesuffix('.0'), 'runner': r} for v in release['sources'] for r in ['ubuntu-22.04', 'ubuntu-22.04-arm']]
+          selected = os.environ.get('COSMIC_VERSION', '')
+          if selected and selected not in release['sources']:
+              raise ValueError('COSMIC version is not pinned in release.json')
+          versions = [selected] if selected else release['sources']
+          matrix = [{'version': v, 'toolchain': release['toolchains'][v], 'cache_toolchain': release['toolchains'][v].removesuffix('.0'), 'runner': r} for v in versions for r in ['ubuntu-22.04', 'ubuntu-22.04-arm']]
           print('value=' + json.dumps({'include': matrix}))
           PYTHON
       - uses: actions/upload-artifact@v4
@@ -106,7 +117,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ inputs.release_tag || github.ref_name }}
+          COSMIC_VERSION: ${{ inputs.cosmic_version }}
         run: |
+          if [ -n "$COSMIC_VERSION" ]; then
+            gh release view "$TAG" >/dev/null
+          fi
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" release/* --clobber
             gh release edit "$TAG" --notes-file .github/release-notes.md

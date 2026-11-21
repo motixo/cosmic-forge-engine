@@ -24,6 +24,7 @@ def source_inputs(version, release):
         '1.11.0-pop.f2beba6',
         '1.11.0-pop.0a67a6c',
         '1.11.0-pop.abb6ebc',
+        '1.11.0-pop.6968c5d',
     ):
         patches.append(ROOT / 'pop-66524a0-theme.patch')
     files = patches + [ROOT / 'smithay-damage.patch', ROOT / 'prepare_smithay.py'] + [ROOT / name for name in ['runtime.rs', 'loader.rs', 'animation.rs', 'effect_map.rs', 'backdrop.rs', 'surface_state.rs', 'glass.frag']]

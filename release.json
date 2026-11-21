@@ -9,7 +9,8 @@
     "1.11.0-pop.8129317": "8129317d4338cfda2392c816a9628302580a66f9",
     "1.11.0-pop.f2beba6": "f2beba6eccb7ae4d66c962dfb933fcaa2450166b",
     "1.11.0-pop.0a67a6c": "0a67a6cdc7090fa1a39e730eceaa10d1a0cf08bb",
-    "1.11.0-pop.abb6ebc": "abb6ebc49ba58daa14163872954cdef3f830a04a"
+    "1.11.0-pop.abb6ebc": "abb6ebc49ba58daa14163872954cdef3f830a04a",
+    "1.11.0-pop.6968c5d": "6968c5d81901f110911aaa526af1a46fc9f360ed"
   },
   "abi": 1,
   "bundle_files": [
@@ -66,6 +67,7 @@
     "1.11.0-pop.8129317": "1.95.0",
     "1.11.0-pop.f2beba6": "1.95.0",
     "1.11.0-pop.0a67a6c": "1.95.0",
-    "1.11.0-pop.abb6ebc": "1.95.0"
+    "1.11.0-pop.abb6ebc": "1.95.0",
+    "1.11.0-pop.6968c5d": "1.95.0"
   }
 }

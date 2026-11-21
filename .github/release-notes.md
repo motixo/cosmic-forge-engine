@@ -1,2 +1,2 @@
-- Support the latest Pop!_OS 24.04 compositor build, `abb6ebc`.
+- Support Pop!_OS 24.04 compositor builds `abb6ebc` and `6968c5d`.
 - Keep window frame colors in sync when switching themes on newer Pop!_OS builds.
