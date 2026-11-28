@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 
 from recovery import progress
-from prepare_smithay import prepare_smithay
+from prepare_smithay import PATCH as SMITHAY_PATCH, prepare_smithay
 
 ROOT = Path(__file__).resolve().parent
 
@@ -20,6 +20,7 @@ def source_inputs(version, release):
     patches = [
         ROOT / name for name in release['bundle_files']
         if name.startswith('patches/')
+        and not name.startswith(('patches/pop-', 'patches/smithay-'))
         and (not name.startswith('patches/epoch-') or name.startswith(f'patches/epoch-{version}-'))
     ]
     if version in (
@@ -30,8 +31,8 @@ def source_inputs(version, release):
         '1.11.0-pop.abb6ebc',
         '1.11.0-pop.6968c5d',
     ):
-        patches.append(ROOT / 'pop-66524a0-theme.patch')
-    files = patches + [ROOT / 'smithay-damage.patch', ROOT / 'prepare_smithay.py'] + [ROOT / name for name in ['runtime.rs', 'loader.rs', 'animation.rs', 'effect_map.rs', 'backdrop.rs', 'surface_state.rs', 'glass.frag']]
+        patches.append(ROOT / 'patches/pop-66524a0-theme.patch')
+    files = patches + [SMITHAY_PATCH, ROOT / 'prepare_smithay.py'] + [ROOT / name for name in ['runtime.rs', 'loader.rs', 'animation.rs', 'effect_map.rs', 'backdrop.rs', 'surface_state.rs', 'glass.frag']]
     binary_version = pin + '-forge-r' + str(release['renderer_revision'])
     return patches, {'commit': pin, 'binary_version': binary_version,
                      'sha256': {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in files}}

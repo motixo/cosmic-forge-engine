@@ -32,7 +32,7 @@ class PlatformTests(unittest.TestCase):
                         '1.11.0-pop.6968c5d'):
             with self.subTest(version=version):
                 patches, _ = source_inputs(version, release)
-                self.assertIn(ROOT / 'pop-66524a0-theme.patch', patches)
+                self.assertIn(ROOT / 'patches/pop-66524a0-theme.patch', patches)
 
     def test_native_package_managers_capture_exact_versions(self):
         for identity, manager, version in [('arch', 'pacman', '1:1.10.0-1'),

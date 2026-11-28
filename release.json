@@ -17,8 +17,8 @@
   "bundle_files": [
     "build.py",
     "prepare_smithay.py",
-    "smithay-damage.patch",
-    "pop-66524a0-theme.patch",
+    "patches/smithay-damage.patch",
+    "patches/pop-66524a0-theme.patch",
     "install.py",
     "recovery.py",
     "login_path.py",

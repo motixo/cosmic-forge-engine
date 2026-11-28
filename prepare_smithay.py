@@ -8,7 +8,7 @@ import shutil
 import subprocess
 
 URL = 'https://github.com/smithay/smithay.git'
-PATCH = Path(__file__).resolve().with_name('smithay-damage.patch')
+PATCH = Path(__file__).resolve().parent / 'patches/smithay-damage.patch'
 
 
 def prepare_smithay(source, offline=False, vendor=None):
