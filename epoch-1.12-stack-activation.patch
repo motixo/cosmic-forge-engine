@@ -1,0 +1,12 @@
+diff --git a/src/shell/element/stack.rs b/src/shell/element/stack.rs
+--- a/src/shell/element/stack.rs
++++ b/src/shell/element/stack.rs
+@@ -997,7 +997,7 @@
+ }
+ 
+ impl Program for CosmicStackInternal {
+-    fn window_active(&self) -> bool { self.activated.load(Ordering::SeqCst) }
++    fn window_active(&self) -> bool { self.activated }
+     type Message = Message;
+ 
+     fn update(

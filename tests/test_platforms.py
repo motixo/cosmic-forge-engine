@@ -79,7 +79,7 @@ class PlatformTests(unittest.TestCase):
                 query.assert_not_called()
 
     def test_unknown_or_unpublished_versions_are_refused(self):
-        for version in ['1.9.0-1', '1.12.0-1', '2.0.0-1', '0.1~abc1234']:
+        for version in ['1.9.0-1', '99.0.0-1', '0.1~abc1234']:
             with patch('platforms.subprocess.check_output', return_value='unknown revision'):
                 with self.assertRaises(RuntimeError):
                     platforms.compositor_version('cosmic-comp ' + version)

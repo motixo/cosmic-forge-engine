@@ -10,7 +10,8 @@
     "1.11.0-pop.f2beba6": "f2beba6eccb7ae4d66c962dfb933fcaa2450166b",
     "1.11.0-pop.0a67a6c": "0a67a6cdc7090fa1a39e730eceaa10d1a0cf08bb",
     "1.11.0-pop.abb6ebc": "abb6ebc49ba58daa14163872954cdef3f830a04a",
-    "1.11.0-pop.6968c5d": "6968c5d81901f110911aaa526af1a46fc9f360ed"
+    "1.11.0-pop.6968c5d": "6968c5d81901f110911aaa526af1a46fc9f360ed",
+    "1.12.0": "0681eaf68324d2afd8cac175d1e10a22b7d34cdf"
   },
   "abi": 1,
   "bundle_files": [
@@ -18,6 +19,7 @@
     "prepare_smithay.py",
     "smithay-damage.patch",
     "pop-66524a0-theme.patch",
+    "epoch-1.12-stack-activation.patch",
     "install.py",
     "recovery.py",
     "login_path.py",
@@ -68,6 +70,7 @@
     "1.11.0-pop.f2beba6": "1.95.0",
     "1.11.0-pop.0a67a6c": "1.95.0",
     "1.11.0-pop.abb6ebc": "1.95.0",
-    "1.11.0-pop.6968c5d": "1.95.0"
+    "1.11.0-pop.6968c5d": "1.95.0",
+    "1.12.0": "1.95.0"
   }
 }

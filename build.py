@@ -27,6 +27,8 @@ def source_inputs(version, release):
         '1.11.0-pop.6968c5d',
     ):
         patches.append(ROOT / 'pop-66524a0-theme.patch')
+    if version == '1.12.0':
+        patches.append(ROOT / 'epoch-1.12-stack-activation.patch')
     files = patches + [ROOT / 'smithay-damage.patch', ROOT / 'prepare_smithay.py'] + [ROOT / name for name in ['runtime.rs', 'loader.rs', 'animation.rs', 'effect_map.rs', 'backdrop.rs', 'surface_state.rs', 'glass.frag']]
     binary_version = pin + '-forge-r' + str(release['renderer_revision'])
     return patches, {'commit': pin, 'binary_version': binary_version,
