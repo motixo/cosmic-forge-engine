@@ -154,6 +154,18 @@ class EngineInstallerTests(unittest.TestCase):
         self.assertEqual(installed['binary_sha256'], installer.digest(candidate.read_bytes()))
         self.assertEqual(installed['previous'], previous['previous'])
 
+    def test_explicit_source_build_runs_with_an_engine_already_installed(self):
+        self.install()
+        with patch.object(sys, 'argv', ['install.py', '--prefix', str(self.prefix), '--build']), \
+             patch.object(installer, 'installed_packages', return_value=(PACKAGES, '1.10.0')), \
+             patch.object(installer.subprocess, 'check_output', return_value=VERSION), \
+             patch.object(installer.subprocess, 'run') as run, \
+             patch.object(installer, 'install') as install:
+            installer.main()
+        run.assert_called_once()
+        command = run.call_args.args[0]
+        self.assertEqual(install.call_args.args[0], Path(command[command.index('--output') + 1]))
+
     def test_source_build_selects_a_new_checkout_when_the_patch_changes(self):
         _, inputs = installer.source_inputs('1.10.0', RELEASE)
         patches = inputs['cosmic_patches']
@@ -316,7 +328,7 @@ class EngineInstallerTests(unittest.TestCase):
         binary = Path(previous_record['destination']) / 'cosmic-comp'
         before = binary.read_bytes(), binary.stat().st_mtime_ns
         compositor = {'cosmic-comp': previous_packages['cosmic-comp']}
-        with patch.object(sys, 'argv', ['install.py', '--build', '--prefix', str(self.prefix)]), \
+        with patch.object(sys, 'argv', ['install.py', '--prefix', str(self.prefix)]), \
              patch.object(installer, 'installed_packages', return_value=(compositor, '1.10.0')), \
              patch.object(installer.subprocess, 'check_output', return_value=VERSION), \
              patch.object(installer, 'obtain', side_effect=AssertionError('must not download')), \

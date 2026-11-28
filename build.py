@@ -115,7 +115,7 @@ def main():
     progress('building')
     subprocess.run(command, cwd=work, env=dict(os.environ, CARGO_TARGET_DIR=str(target),
                    CARGO_PROFILE_RELEASE_LTO='thin'), check=True)
-    output = (args.output or ROOT / 'build/bin/cosmic-comp').resolve()
+    output = args.output or ROOT / 'build/bin/cosmic-comp'
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(dir=output.parent, delete=False) as temporary:
         pending = Path(temporary.name)

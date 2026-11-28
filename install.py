@@ -149,7 +149,8 @@ def main():
         # Check launcher ownership before starting a potentially long build.
         _, _, launcher = paths(args.prefix)
         _, record, _ = record_for(state, launcher)
-        if args.binary is None and args.release_tag is None and record and isinstance(record.get('packages'), dict):
+        if (not args.build and args.binary is None and args.release_tag is None
+                and record and isinstance(record.get('packages'), dict)):
             compatible = dict(record, packages={name: record['packages'].get(name) for name in PACKAGES})
             if already_installed(compatible, packages, version, args.prefix):
                 if record['packages'] == packages:
