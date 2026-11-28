@@ -19,6 +19,7 @@
     "prepare_smithay.py",
     "smithay-damage.patch",
     "pop-66524a0-theme.patch",
+    "epoch-1.12-stack-activation.patch",
     "install.py",
     "recovery.py",
     "login_path.py",
