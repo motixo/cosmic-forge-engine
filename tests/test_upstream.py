@@ -36,9 +36,13 @@ class UpstreamTests(unittest.TestCase):
 
     def test_new_official_tag_and_pop_snapshot_can_be_checked_together(self):
         pin = '1234567' + 'a' * 33
+        config = {'sources': {'1.11.0': 'c' * 40}}
         tags = [{'name': 'epoch-1.12.0', 'commit': {'sha': pin}},
                 {'name': 'epoch-1.9.0', 'commit': {'sha': 'b' * 40}}]
-        self.assertEqual(upstream.pending_sources(self.config(), INDEX, tags), {'1.12.0': pin})
+        self.assertEqual(upstream.pending_sources(config, INDEX, tags), {
+            '1.12.0': pin,
+            '1.11.0-pop.ec674cd': PIN,
+        })
 
     def test_package_paths_versions_and_duplicate_entries_are_validated(self):
         for invalid in (INDEX.replace(PIN, 'bad-pin'), INDEX.replace(PIN[:7], 'abcdef0', 1),

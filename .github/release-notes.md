@@ -1,2 +1,3 @@
+- Add support for COSMIC 1.12.0.
 - Support Pop!_OS 24.04 compositor builds `abb6ebc` and `6968c5d`.
 - Keep window frame colors in sync when switching themes on newer Pop!_OS builds.
