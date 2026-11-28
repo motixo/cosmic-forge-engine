@@ -169,9 +169,9 @@ def main():
                        '--work-dir', str(work)]
             target = os.environ.get('COSMIC_FORGE_ENGINE_TARGET') or str(
                 (args.prefix / 'cache' if args.prefix else xdg('XDG_CACHE_HOME', '.cache')) / 'cosmic-forge/engine-target' / version)
-            command.extend(['--target-dir', target])
+            binary = ROOT / 'build/bin' / version / fingerprint / 'cosmic-comp'
+            command.extend(['--target-dir', target, '--output', str(binary)])
             subprocess.run(command, check=True)
-            binary = ROOT / 'build/bin/cosmic-comp'
         if binary is None:
             binary = obtain(version, json.loads((ROOT / 'release.json').read_text()), args.release_tag, args.prefix)
         current_packages, current_version = installed_packages()

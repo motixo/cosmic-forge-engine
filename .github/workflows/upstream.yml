@@ -31,6 +31,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           BRANCH: ${{ steps.upstream.outputs.branch }}
+          VERSIONS: ${{ steps.upstream.outputs.versions }}
         run: |
           if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null; then
             echo "A compatibility branch already exists: $BRANCH"
@@ -43,4 +44,6 @@ jobs:
           git commit -m 'compat: pin new compositor builds for testing'
           git push origin "$BRANCH"
           gh pr create --base main --head "$BRANCH" --title 'Test new COSMIC compositor builds' --body-file build/upstream-pr.md
-          gh workflow run release.yml --ref "$BRANCH" -f publish=false
+          while IFS= read -r version; do
+            gh workflow run release.yml --ref "$BRANCH" -f "cosmic_version=$version"
+          done <<< "$VERSIONS"

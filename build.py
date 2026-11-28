@@ -10,39 +10,55 @@ import subprocess
 import tempfile
 
 from recovery import progress
-from prepare_smithay import PATCH as SMITHAY_PATCH, prepare_smithay
+from prepare_smithay import prepare_smithay
 
 ROOT = Path(__file__).resolve().parent
 
 
+def selected_patches(release, target, version):
+    return [
+        ROOT / entry['path'] for entry in release['patch_series'][target]
+        if 'versions' not in entry or version in entry['versions']
+    ]
+
+
 def source_inputs(version, release):
     pin = release['sources'][version]
-    patches = [
-        ROOT / name for name in release['bundle_files']
-        if name.startswith('patches/')
-        and not name.startswith(('patches/pop-', 'patches/smithay-'))
-        and (not name.startswith('patches/epoch-') or name.startswith(f'patches/epoch-{version}-'))
-    ]
-    if version in (
-        '1.11.0-pop.66524a0',
-        '1.11.0-pop.8129317',
-        '1.11.0-pop.f2beba6',
-        '1.11.0-pop.0a67a6c',
-        '1.11.0-pop.abb6ebc',
-        '1.11.0-pop.6968c5d',
-    ):
-        patches.append(ROOT / 'patches/pop-66524a0-theme.patch')
-    files = patches + [SMITHAY_PATCH, ROOT / 'prepare_smithay.py'] + [ROOT / name for name in ['runtime.rs', 'loader.rs', 'animation.rs', 'effect_map.rs', 'backdrop.rs', 'surface_state.rs', 'glass.frag']]
-    binary_version = pin + '-forge-r' + str(release['renderer_revision'])
-    return patches, {'commit': pin, 'binary_version': binary_version,
-                     'sha256': {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in files}}
+    patches = selected_patches(release, 'cosmic-comp', version)
+    smithay = selected_patches(release, 'smithay', version)
+    files = [ROOT / name for name in ('build.py', 'prepare_smithay.py', *release['overlays'])]
+
+    def fingerprint(paths):
+        return [[p.relative_to(ROOT).as_posix(), hashlib.sha256(p.read_bytes()).hexdigest()]
+                for p in paths]
+
+    return patches, {
+        'commit': pin,
+        'binary_version': pin + '-forge-r' + str(release['renderer_revision']),
+        'toolchain': release['toolchains'][version],
+        'cosmic_patches': fingerprint(patches),
+        'smithay_patches': fingerprint(smithay),
+        'overlay_destinations': release['overlays'],
+        'sources': fingerprint(files),
+    }
+
+
+def apply_recipe(source, version, release, recipe, offline=False, vendor=None):
+    # An unpacked source archive can sit inside an unrelated Git worktree.
+    environment = dict(os.environ, GIT_CEILING_DIRECTORIES=str(source.resolve().parent))
+    for patch in selected_patches(release, 'cosmic-comp', version):
+        subprocess.run(['git', 'apply', str(patch)], cwd=source, env=environment, check=True)
+    prepare_smithay(source, offline, vendor, selected_patches(release, 'smithay', version))
+    for name, destination in release['overlays'].items():
+        shutil.copy2(ROOT / name, source / destination)
+    binary_version = recipe['binary_version']
+    (source / 'build.rs').write_text(f'fn main() {{ println!("cargo:rustc-env=GIT_HASH={binary_version}"); }}\n')
 
 
 def prepare(source, version, local=None, offline=False):
     release = json.loads((ROOT / 'release.json').read_text())
-    patches, expected = source_inputs(version, release)
+    _, expected = source_inputs(version, release)
     pin = expected['commit']
-    binary_version = expected['binary_version']
     marker = source / '.forge-source.json'
     if marker.exists():
         if json.loads(marker.read_text()) != expected:
@@ -50,6 +66,8 @@ def prepare(source, version, local=None, offline=False):
         return
     if source.exists():
         raise RuntimeError('Refusing to modify an existing unmarked source directory')
+    if offline and not local:
+        raise RuntimeError('An upstream checkout is required for offline preparation')
     source.parent.mkdir(parents=True, exist_ok=True)
     if local:
         subprocess.run(['git', 'clone', '--shared', '--no-checkout', str(local), str(source)], check=True)
@@ -58,15 +76,7 @@ def prepare(source, version, local=None, offline=False):
         subprocess.run(['git', 'init', '-q', str(source)], check=True)
         subprocess.run(['git', 'fetch', '--depth', '1', release['upstream'], pin], cwd=source, check=True)
         subprocess.run(['git', 'checkout', '--detach', 'FETCH_HEAD'], cwd=source, check=True)
-    for patch in patches:
-        subprocess.run(['git', 'apply', '--check', str(patch)], cwd=source, check=True)
-        subprocess.run(['git', 'apply', str(patch)], cwd=source, check=True)
-    prepare_smithay(source, offline)
-    destination = source / 'src/backend/render/wayland'
-    for name in ['runtime', 'loader', 'animation', 'effect_map', 'backdrop', 'surface_state']:
-        shutil.copy2(ROOT / (name + '.rs'), destination / ('forge_' + name + '.rs'))
-    shutil.copy2(ROOT / 'glass.frag', destination.parent / 'shaders/forge_glass.frag')
-    (source / 'build.rs').write_text(f'fn main() {{ println!("cargo:rustc-env=GIT_HASH={binary_version}"); }}\n')
+    apply_recipe(source, version, release, expected, offline)
     marker.write_text(json.dumps(expected, indent=2) + '\n')
 
 
@@ -77,11 +87,22 @@ def main():
     parser.add_argument('--work-dir', type=Path)
     parser.add_argument('--target-dir', type=Path)
     parser.add_argument('--offline', action='store_true')
+    parser.add_argument('--prepared-source', type=Path, help='Apply the recipe to a source tree supplied by Nix')
+    parser.add_argument('--smithay-vendor', type=Path, help='Use the existing Cargo vendor tree')
+    parser.add_argument('--output', type=Path, help='Destination for the built compositor')
     parser.add_argument('--prepare-only', action='store_true')
     parser.add_argument('--jobs', type=int, default=3)
     args = parser.parse_args()
     if args.jobs < 1:
         parser.error('--jobs must be positive')
+    if args.prepared_source or args.smithay_vendor:
+        if not args.prepared_source or not args.smithay_vendor or not args.prepare_only:
+            parser.error('--prepared-source and --smithay-vendor require each other and --prepare-only')
+        release = json.loads((ROOT / 'release.json').read_text())
+        _, recipe = source_inputs(args.cosmic_version, release)
+        apply_recipe(args.prepared_source, args.cosmic_version, release, recipe,
+                     offline=True, vendor=args.smithay_vendor.resolve())
+        return
     work = (args.work_dir or ROOT / 'build/engine-sources' / args.cosmic_version).resolve()
     progress('preparing')
     prepare(work, args.cosmic_version, args.source, args.offline)
@@ -94,16 +115,16 @@ def main():
     progress('building')
     subprocess.run(command, cwd=work, env=dict(os.environ, CARGO_TARGET_DIR=str(target),
                    CARGO_PROFILE_RELEASE_LTO='thin'), check=True)
-    output = ROOT / 'build/bin'
-    output.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(dir=output, delete=False) as temporary:
+    output = (args.output or ROOT / 'build/bin/cosmic-comp').resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=output.parent, delete=False) as temporary:
         pending = Path(temporary.name)
     try:
         shutil.copy2(target / 'release/cosmic-comp', pending)
-        os.replace(pending, output / 'cosmic-comp')
+        os.replace(pending, output)
     finally:
         pending.unlink(missing_ok=True)
-    print('Renderer built: ' + str(output / 'cosmic-comp'))
+    print('Renderer built: ' + str(output))
 
 
 if __name__ == '__main__':

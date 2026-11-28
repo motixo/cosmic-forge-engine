@@ -52,7 +52,9 @@
     "platforms.py",
     "prebuilt.py",
     "LICENSE",
-    "LICENSE.libdisplay-info"
+    "LICENSE.libdisplay-info",
+    "patches/blur-geometry.patch",
+    "blur_geometry.rs"
   ],
   "prebuilt": {
     "glibc_min": "2.35",
@@ -72,5 +74,98 @@
     "1.11.0-pop.abb6ebc": "1.95.0",
     "1.11.0-pop.6968c5d": "1.95.0",
     "1.12.0": "1.95.0"
+  },
+  "patch_series": {
+    "cosmic-comp": [
+      {
+        "path": "patches/glass.patch"
+      },
+      {
+        "path": "patches/runtime.patch"
+      },
+      {
+        "path": "patches/generic.patch"
+      },
+      {
+        "path": "patches/animation.patch"
+      },
+      {
+        "path": "patches/backdrop.patch"
+      },
+      {
+        "path": "patches/window-age.patch"
+      },
+      {
+        "path": "patches/output-size.patch"
+      },
+      {
+        "path": "patches/animation-damage.patch"
+      },
+      {
+        "path": "patches/animation-cadence.patch"
+      },
+      {
+        "path": "patches/blurred-backdrop.patch"
+      },
+      {
+        "path": "patches/effect-map.patch"
+      },
+      {
+        "path": "patches/backdrop-frame.patch"
+      },
+      {
+        "path": "patches/partial-blur.patch"
+      },
+      {
+        "path": "patches/rain-field.patch"
+      },
+      {
+        "path": "patches/stacked-blur.patch"
+      },
+      {
+        "path": "patches/rain-repaint.patch"
+      },
+      {
+        "path": "patches/animation-focus.patch"
+      },
+      {
+        "path": "patches/frosted-fused-blur.patch"
+      },
+      {
+        "path": "patches/epoch-1.12.0-stack-activation.patch",
+        "versions": [
+          "1.12.0"
+        ]
+      },
+      {
+        "path": "patches/blur-geometry.patch"
+      },
+      {
+        "path": "patches/pop-66524a0-theme.patch",
+        "versions": [
+          "1.11.0-pop.66524a0",
+          "1.11.0-pop.8129317",
+          "1.11.0-pop.f2beba6",
+          "1.11.0-pop.0a67a6c",
+          "1.11.0-pop.abb6ebc",
+          "1.11.0-pop.6968c5d"
+        ]
+      }
+    ],
+    "smithay": [
+      {
+        "path": "patches/smithay-damage.patch"
+      }
+    ]
+  },
+  "overlays": {
+    "runtime.rs": "src/backend/render/wayland/forge_runtime.rs",
+    "loader.rs": "src/backend/render/wayland/forge_loader.rs",
+    "animation.rs": "src/backend/render/wayland/forge_animation.rs",
+    "effect_map.rs": "src/backend/render/wayland/forge_effect_map.rs",
+    "backdrop.rs": "src/backend/render/wayland/forge_backdrop.rs",
+    "surface_state.rs": "src/backend/render/wayland/forge_surface_state.rs",
+    "glass.frag": "src/backend/render/shaders/forge_glass.frag",
+    "blur_geometry.rs": "src/backend/render/wayland/forge_blur_geometry.rs"
   }
 }

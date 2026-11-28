@@ -4,7 +4,7 @@ Custom shader support for [COSMIC Forge](https://github.com/motixo/cosmic-forge)
 Includes the compositor patches, shader runtime and installer.
 [Shader packs](https://github.com/motixo/cosmic-forge-shaders) are maintained separately.
 
-Supports pinned COSMIC 1.10/1.11 releases on Arch Linux, Fedora, Ubuntu and Pop!_OS.
+Supports pinned COSMIC 1.10, 1.11 and 1.12 releases on Arch Linux, Fedora, Ubuntu and Pop!_OS.
 Prebuilt binaries are available for x86_64 and ARM64 with glibc 2.35+.
 
 ## Install
@@ -41,6 +41,14 @@ python3 build.py --cosmic-version 1.10.0
 
 Requires Python 3.11+, Rust, Git and COSMIC compositor development libraries.
 Upstream commits and the shader ABI are pinned in `release.json`.
+The manifest also lists the ordered patch series for COSMIC and Smithay,
+any version restrictions, and the renderer files copied into COSMIC.
+Native builds, CI and Nix use the same preparation code in `build.py`. Nix
+supplies its unpacked COSMIC source and Cargo vendor directory to that code.
+
+Compatibility builds can run for a single pinned COSMIC version. To publish
+tested sources and binaries, create a new `engine-v*` tag on the release commit.
+The release workflow builds all pinned variants and creates the release for that tag.
 
 Shader ABI 1 provides the following shader inputs:
 

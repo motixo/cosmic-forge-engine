@@ -156,7 +156,8 @@ class EngineInstallerTests(unittest.TestCase):
 
     def test_source_build_selects_a_new_checkout_when_the_patch_changes(self):
         _, inputs = installer.source_inputs('1.10.0', RELEASE)
-        changed = dict(inputs, sha256=dict(inputs['sha256'], **{'glass.patch': 'changed'}))
+        patches = inputs['cosmic_patches']
+        changed = dict(inputs, cosmic_patches=[[patches[0][0], 'changed'], *patches[1:]])
         with patch.object(sys, 'argv', ['install.py', '--prefix', str(self.prefix), '--build']), \
              patch.object(installer, 'installed_packages', return_value=(PACKAGES, '1.10.0')), \
              patch.object(installer, 'source_inputs', side_effect=[([], inputs), ([], changed)]), \
@@ -167,6 +168,17 @@ class EngineInstallerTests(unittest.TestCase):
         self.assertEqual(len(work), 2)
         self.assertEqual(work[0].parent, work[1].parent)
         self.assertNotEqual(work[0], work[1])
+        outputs = [Path(call.args[0][call.args[0].index('--output') + 1]) for call in run.call_args_list]
+        self.assertNotEqual(outputs[0], outputs[1])
+
+    def test_patch_order_changes_the_source_fingerprint(self):
+        series = RELEASE['patch_series']
+        first, second, *rest = series['cosmic-comp']
+        reordered = dict(RELEASE, patch_series=dict(series, **{'cosmic-comp': [second, first, *rest]}))
+        _, original = installer.source_inputs('1.12.0', RELEASE)
+        _, changed = installer.source_inputs('1.12.0', reordered)
+        self.assertNotEqual(original, changed)
+
 
     def test_different_revision_or_packages_do_not_skip_installation(self):
         self.install()

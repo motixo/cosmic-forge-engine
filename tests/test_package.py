@@ -68,7 +68,13 @@ class PackageTests(unittest.TestCase):
                        dict(release, bundle_files=['../escape']),
                        dict(release, bundle_files=['/tmp/escape']),
                        dict(release, bundle_files=release['bundle_files'] + ['install.py']),
-                       dict(release, bundle_files=['install.py'])]
+                       dict(release, bundle_files=['install.py']),
+                       dict(release, patch_series={'cosmic-comp': []}),
+                       dict(release, patch_series={
+                           **release['patch_series'],
+                           'smithay': [{'path': 'patches/smithay-damage.patch', 'versions': ['unknown']}],
+                       }),
+                       dict(release, overlays={'runtime.rs': '../escape.rs'})]
             for manifest in invalid:
                 with self.subTest(manifest=manifest):
                     (root / 'release.json').write_text(json.dumps(manifest))

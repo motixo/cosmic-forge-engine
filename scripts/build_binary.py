@@ -54,10 +54,11 @@ def main():
     prefix = native_library()
     environment = dict(os.environ, PKG_CONFIG_PATH=str(prefix / 'lib/pkgconfig'),
                        SYSTEM_DEPS_LIBDISPLAY_INFO_LINK='static')
+    binary = ROOT / 'build/portable-bin' / args.cosmic_version / 'cosmic-comp'
     subprocess.run([sys.executable, str(ROOT / 'build.py'), '--cosmic-version', args.cosmic_version,
                     '--work-dir', str(ROOT / 'build/portable-sources' / args.cosmic_version),
                     '--target-dir', str(ROOT / 'build/portable-target' / args.cosmic_version),
-                    '--jobs', str(args.jobs)], env=environment, check=True)
+                    '--output', str(binary), '--jobs', str(args.jobs)], env=environment, check=True)
     subprocess.run(['cargo', 'test', '--release', '--locked', '--offline', '--lib',
                     'forge_', '-j', str(args.jobs)],
                    cwd=ROOT / 'build/portable-sources' / args.cosmic_version,
@@ -72,7 +73,6 @@ def main():
                    env=dict(environment, CARGO_TARGET_DIR=str(ROOT / 'build/portable-target' / args.cosmic_version),
                             CARGO_PROFILE_RELEASE_LTO='thin', LIBGL_ALWAYS_SOFTWARE='1',
                             FORGE_QA_ROOT=str(qa), XDG_RUNTIME_DIR=str(runtime)), check=True)
-    binary = ROOT / 'build/bin/cosmic-comp'
     subprocess.run(['strip', '--strip-unneeded', str(binary)], check=True)
     subprocess.run([str(binary), '--version'], check=True)
     linked = subprocess.check_output(['ldd', str(binary)], text=True)

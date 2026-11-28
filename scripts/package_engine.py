@@ -34,6 +34,36 @@ def package(root):
         raise ValueError('Invalid engine file list')
     if len(set(names)) != len(names) or not REQUIRED.issubset(names):
         raise ValueError('Missing or duplicate engine files')
+    series = release.get('patch_series')
+    if not isinstance(series, dict) or set(series) != {'cosmic-comp', 'smithay'}:
+        raise ValueError('Invalid patch targets')
+    patches = []
+    for entries in series.values():
+        if not isinstance(entries, list):
+            raise ValueError('Invalid patch series')
+        for entry in entries:
+            if not isinstance(entry, dict) or not {'path'} <= entry.keys() <= {'path', 'versions'}:
+                raise ValueError('Invalid patch entry')
+            name = entry['path']
+            versions = entry.get('versions')
+            if not isinstance(name, str) or not name.startswith('patches/') or not name.endswith('.patch'):
+                raise ValueError('Invalid patch path')
+            if 'versions' in entry and (
+                not isinstance(versions, list) or not versions
+                or any(not isinstance(version, str) or version not in sources for version in versions)
+                or len(set(versions)) != len(versions)
+            ):
+                raise ValueError('Invalid patch versions')
+            patches.append(name)
+    if len(set(patches)) != len(patches) or set(patches) != {name for name in names if name.endswith('.patch')}:
+        raise ValueError('Each bundled patch must appear in exactly one series')
+    overlays = release.get('overlays')
+    if not isinstance(overlays, dict) or not overlays or any(
+        name not in names or not isinstance(dest, str)
+        or not re.fullmatch(r'src/backend/render/(?:wayland/forge_[a-z_]+\.rs|shaders/forge_[a-z_]+\.frag)', dest)
+        for name, dest in overlays.items()
+    ) or len(set(overlays.values())) != len(overlays):
+        raise ValueError('Invalid renderer overlays')
     files = {}
     for name in names:
         path = root / name

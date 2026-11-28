@@ -94,6 +94,7 @@ def main():
         branch = 'compatibility/' + hashlib.sha256(json.dumps(pending, sort_keys=True).encode()).hexdigest()[:12]
         with open(destination, 'a') as stream:
             stream.write(f'changed={str(bool(pending)).lower()}\nbranch={branch}\n')
+            stream.write('versions<<END\n' + ''.join(f'{version}\n' for version in pending) + 'END\n')
 
 
 if __name__ == '__main__':

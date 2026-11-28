@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Patch the exact Smithay dependency from the compositor lockfile."""
-import argparse
 import os
 from pathlib import Path
 import re
@@ -8,10 +7,9 @@ import shutil
 import subprocess
 
 URL = 'https://github.com/smithay/smithay.git'
-PATCH = Path(__file__).resolve().parent / 'patches/smithay-damage.patch'
 
 
-def prepare_smithay(source, offline=False, vendor=None):
+def prepare_smithay(source, offline, vendor, patches):
     lockfile = source / 'Cargo.lock'
     lock = lockfile.read_text()
     lines = re.findall(r'^source = "git\+https://github\.com/smithay/smithay\.git\?rev=[^#"]+#([a-f0-9]{40})"\n',
@@ -42,11 +40,12 @@ def prepare_smithay(source, offline=False, vendor=None):
             subprocess.run(['git', 'fetch', '--depth', '1', URL, revision], cwd=checkout, check=True)
         subprocess.run(['git', 'checkout', '--detach', revision], cwd=checkout, check=True)
 
-    if vendor:
-        subprocess.run(['patch', '-p1', '--batch', '-i', str(PATCH)], cwd=checkout, check=True)
-    else:
-        subprocess.run(['git', 'apply', '--check', str(PATCH)], cwd=checkout, check=True)
-        subprocess.run(['git', 'apply', str(PATCH)], cwd=checkout, check=True)
+    for patch in patches:
+        if vendor:
+            subprocess.run(['patch', '-p1', '--batch', '-i', str(patch)], cwd=checkout, check=True)
+        else:
+            subprocess.run(['git', 'apply', '--check', str(patch)], cwd=checkout, check=True)
+            subprocess.run(['git', 'apply', str(patch)], cwd=checkout, check=True)
     manifest = source / 'Cargo.toml'
     updated, count = re.subn(r'^smithay = \{ git = "https://github\.com/smithay/smithay\.git", rev = "[^"]+" \}$',
                              'smithay = { path = ".forge-smithay" }', manifest.read_text(), flags=re.MULTILINE)
@@ -55,11 +54,3 @@ def prepare_smithay(source, offline=False, vendor=None):
     manifest.write_text(updated)
     lockfile.write_text(re.sub(r'^source = "git\+https://github\.com/smithay/smithay\.git\?rev=[^\n]+\n',
                                '', lock, flags=re.MULTILINE))
-
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('source', type=Path)
-    parser.add_argument('--vendor', type=Path)
-    args = parser.parse_args()
-    prepare_smithay(args.source, vendor=args.vendor)
